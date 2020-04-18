@@ -1,76 +1,132 @@
-# Class used to compute indicators on a dataframe. We're creating it in order to separate it from the rest of the code that is not related.
-# Here, we'll import indicators from external libraries, but also write our own functions for computing indicators
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Mar 25 05:12:14 2020
 
-from pyti.smoothed_moving_average import smoothed_moving_average as sma
-from pyti.exponential_moving_average import exponential_moving_average as ema
-from pyti.bollinger_bands import lower_bollinger_band as lbb
-from pyti.bollinger_bands import upper_bollinger_band as ubb
+@author: Taras
+"""
+import numpy as np
 
-# these are all the imported indicators we need for today, however there are heaps others that you can use to code your own strategies,
-# including RSI, MACD and others... check it out:
+class Candle:
+    def __init__(self, Open, High, Low, Close):
+        ''' Initialize candlestick basic parameters: color, high_shadow, low_shadow and body.
+        Note that when Open = Close we treat the candle as green.'''
+        self.green = Close >= Open
+        self.red = Close < Open
+        self.color = 'green' if self.green else 'red'
+        self.high_shadow = High - Close if self.green else High - Open
+        self.low_shadow = Open - Low if self.green else Close - Low
+        self.body = np.abs(Open - Close)
+        
+    def is_hammer(self, low_to_body = 2.0, high_to_body = 1.5):
+        '''We define here that the candle is called 'hammer' if its low to body ratio >= 'low_to_body'
+        and its high to body ratio <= 'high to body'. Body can not be zero.
+        In most cases we used 2.0 and 1.5 for these values correspondingly '''
+        if self.body == 0:
+            return False
+        if self.low_shadow/self.body >= low_to_body and self.high_shadow/self.body <= high_to_body :
+            return True
+        else: 
+            return False
+        
+    def is_doji(self):
+        doji = False
+        if self.body == 0: 
+            return True
+        elif self.high_shadow != 0:
+            if (0.9 < self.low_shadow/self.high_shadow < 1.1) and (self.low_shadow/self.body > 5):
+                return True # standard doji, but body is not zero
+            if (self.low_shadow/self.high_shadow > 5) and (self.low_shadow/self.body > 5) : 
+                return True  # Dragonfly doji
+        elif self.low_shadow != 0:
+            if (self.high_shadow/self.low_shadow > 5) and (self.high_shadow/self.body > 5):
+                return True # gravestone doji
+        else:
+            return False
+        return doji
+        
+            
+     
+        
 
-# Now, we're going to compute an indicator on our own (actually, a collection of indicators) called the ichimoku cloud...
-# it contains 4 indicators: tenkan sen, kijun sen, senkou span a and senkou span b...
-# I won't go in detail about what each of them means, but they are useful in certain strategies
+def candle_params(Open, High, Low, Close):
+    #import math
+    green = Close >= Open
+    red = Close < Open
+    #doji = Close == Open
+    color = 'green'
+    if green:
+        low_shadow = Open - Low
+        high_shadow = High - Close
+        color = 'green'
+    #if red:
+    else:
+        low_shadow = Close - Low
+        high_shadow = High - Open
+        color = 'red'
+    body = np.abs(Close - Open)
+    return body, low_shadow, high_shadow, color
 
-def ComputeIchimokuCloud(df):
-	''' Taken from the python for finance blog '''
+def is_hammer(body, low_shadow, high_shadow):
+    hammer = False
+    if body == 0: hammer = False
+    elif low_shadow/body >= 2.0 and high_shadow/body <= 1.5:
+        hammer = True
+    else: hammer = False
+    return hammer
 
-	# Tenkan-sen (Conversion Line): (9-period hign + 9-period low)/2
-	nine_period_high = df['high'].rolling(window=9).max()
-	nine_period_low = df['low'].rolling(window=9).min()
-	df['tenkansen'] = (nine_period_high + nine_period_low)/2
+def is_doji(body, low_shadow, high_shadow):
+    doji = False
+    if body == 0:  
+        doji = True # Any type of doji
+    elif high_shadow != 0:
+        if (0.9 < low_shadow/high_shadow < 1.1) and (low_shadow/body > 5):
+            doji = True # standard doji, but body is not zero
+        if (low_shadow/high_shadow > 5) and (low_shadow/body > 5) : doji = True  # Dragonfly doji
+    elif low_shadow != 0:
+        if (high_shadow/low_shadow > 5) and (high_shadow/body > 5): doji = True # gravestone doji
+    return doji
+    
 
-	# Kijun-sen (Base Line): (26-period high + 26-period low)/2
-	period26_high = df['high'].rolling(window=26).max()
-	period26_low = df['low'].rolling(window=26).min()
-	df['kijunsen'] = (period26_high + period26_low)/2
-
-	# Senkou Span A (Leading Span A): (Conversion Line + Base Line)/2
-	df['senkou_a'] = ((df['tenkansen'] + df['kijunsen']) / 2 ).shift(26)
-
-	# Senkou Span B
-	period52_high = df['high'].rolling(window=52).max()
-	period52_low = df['low'].rolling(window=52).min()
-	df['senkou_b'] = ((period52_high + period52_low) / 2).shift(52)
-
-	# Chikou Span: Most recent closing price, plotted 26 periods behind (optional)
-	df['chikouspan'] = df['close'].shift(-26)
-
-	return df
-
-# Now, we're going to write the function used to compute any indicator that we 
-# want and add it to the dataframe. This is the function that will be called 
-# from outside this class, when a TradingModel needs an indicator to be added 
-# to it, in order to compute a strategy
-
-class Indicators:
-
-	# Here, we're putting all indicators thet we have access to (we can add any
-	# number of indicators here); The purpose of this dict will become apparent
-
-	INDICATORS_DICT = {
-		"sma": sma,
-		"ema": ema,
-		"lbb": lbb,
-		"ubb": ubb,
-		"ichimoku": ComputeIchimokuCloud,
-	}
-
-	@staticmethod
-	def AddIndicator(df, indicator_name, col_name, args):
-		# df is the dataframe to which we will add the indicator
-		# indicator_name is the name of the indicator as found in the dict above
-		# col_name is the name that the indicator will appear under in the dataframe
-		# args are arguments that might be used when calling the indicator function
-		try:
-			if indicator_name == "ichimoku": 
-				# this is a special case, because it will create more columns in the df
-				df = ComputeIchimokuCloud(df)
-			else:
-				# remember here how we used to compute the other indicators inside 
-				# TradingModel: self.df['fast_sma'] = sma(self.df['close'].tolist(), 10)
-				df[col_name] = Indicators.INDICATORS_DICT[indicator_name](df['close'].tolist(), args)
-		except Exception as e:
-			print("\nException raised when trying to compute "+indicator_name)
-			print(e)
+def candle_pattern(last, before_last):
+    '''Start counting from last candle
+    '''
+    #import math
+    pattern = {'last':'no', 'blast':'no', 'total':'no'}
+    Open_l, High_l, Low_l, Close_l = [item for item in last]
+    Open_bl, High_bl, Low_bl, Close_bl = [item for item in before_last]
+    Body_l, high_shadow_l, low_shadow_l, color_l = candle_params(Open_l, High_l, Low_l, Close_l)
+    Body_bl, high_shadow_bl, low_shadow_bl, color_bl = candle_params(Open_bl, High_bl, Low_bl, Close_bl)
+    if is_doji(Body_l, high_shadow_l, low_shadow_l):
+        pattern['last'] = 'Doji'
+        return pattern['last']
+    elif is_hammer(Body_l, high_shadow_l, low_shadow_l):
+        pattern['last'] = 'Hammer'
+        return pattern['last']
+    else: pattern['last'] = 'no'
+    
+    if is_doji(Body_bl, high_shadow_bl, low_shadow_bl):
+        pattern['blast'] = 'Doji'
+        return pattern['blast']
+    elif is_hammer(Body_bl, high_shadow_bl, low_shadow_bl):
+        pattern['blast'] = 'Hammer'
+        return pattern['blast']
+    else: pattern['blast'] = 'no'
+    
+    # Check for Bullish engulfing and Harami
+    if color_l == 'green' and color_bl == 'red':
+        Bullish_eng = Open_l < Close_bl and Close_l > Open_bl
+        Harami = Open_l > Close_bl and Close_l < Open_bl
+    else: 
+        Bullish_eng = False
+        Harami = False
+    if Bullish_eng: pattern['total'] = 'Bullish eng.'
+    if Harami: pattern['total'] = 'Harami'
+    
+    if pattern['total'] != 'no': 
+        pattern = pattern['total']
+    elif pattern['last'] != 'no' :
+        pattern = pattern['last']
+    else:
+        pattern = 'no'
+    
+    return pattern
