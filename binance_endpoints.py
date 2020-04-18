@@ -50,6 +50,9 @@ def get_symbols_BTC():
             symbols.append(ticker['symbol'])
     return symbols
 
+def get_ticker(symbol):
+    return client.get_ticker(symbol=symbol)
+
 def save_filled_oco(coin_dict, profit):
     '''Saves info about filled OCO orders in a file'''
     elapsed = (time.time() - coin_dict['start_signal'])/60
