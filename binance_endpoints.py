@@ -46,7 +46,7 @@ def get_symbols_BTC():
     
     # Select only pairs with BTC
     for ticker in tickers_list:
-        if str(ticker['symbol'])[-3:] == 'BTC':
+        if (str(ticker['symbol'])[-3:] == 'BTC')  and (float(ticker['askQty']) > 0) :
             symbols.append(ticker['symbol'])
     return symbols
 
