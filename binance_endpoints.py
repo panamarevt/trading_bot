@@ -7,7 +7,7 @@ Created on Wed Mar 25 05:15:10 2020
 
 import numpy as np
 import time
-import datetime
+from datetime import datetime
 
 from binance.client import Client
 from binance.enums import *
@@ -121,7 +121,7 @@ def place_market_buy_order(symbol, qty):
     market_order = client.order_market_buy(symbol=symbol, quantity=qty)
     return market_order
     
-def place_buy_order(symbol,MAX_TRADES,in_trade, BUY_METHOD):
+def place_buy_order(symbol,MAX_TRADES,in_trade, BUY_METHOD, DEPOSIT_FRACTION):
     '''MAX_TRADES is maximum number of simulateneous trades
     in_trade - amount of coins that are in trade at the moment
     BUY_METHOD should be 'MARKET' or 'LIMIT'
@@ -130,7 +130,7 @@ def place_buy_order(symbol,MAX_TRADES,in_trade, BUY_METHOD):
     BuyPrice = get_buy_price(symbol, BUY_METHOD)
     #qty = amount_btc/np.float(BuyPrice)
     #qty = np.round(qty,0)
-    qty = get_buy_amount(BuyPrice,MAX_TRADES,in_trade)
+    qty = get_buy_amount(BuyPrice,MAX_TRADES,in_trade,deposit_fraction=DEPOSIT_FRACTION)
     prec = get_lot_precision(symbol)
     qty = float(truncate(qty, prec))
     
@@ -149,7 +149,7 @@ def place_buy_order(symbol,MAX_TRADES,in_trade, BUY_METHOD):
 
     return order, am_btc
 
-def get_buy_amount(BuyPrice, MAX_TRADES, in_trade, asset='BTC'):
+def get_buy_amount(BuyPrice, MAX_TRADES, in_trade, asset='BTC', deposit_fraction=0.1):
     '''Determine the amount of coin to buy. 
     MAX_TRADES - number of maximum simulteneous trades
     in_trade - number of coins tradind at the moment
@@ -160,7 +160,7 @@ def get_buy_amount(BuyPrice, MAX_TRADES, in_trade, asset='BTC'):
     #amount_btc = float(client.get_asset_balance(asset)['free'])+float(client.get_asset_balance(asset)['locked'])
     amount_btc = float(client.get_asset_balance(asset)['free'])
     #in_trade = len(trading_coins)
-    amount_btc = 0.1*amount_btc/(MAX_TRADES - in_trade)
+    amount_btc = deposit_fraction*amount_btc/(MAX_TRADES - in_trade)
     qty = amount_btc/float(BuyPrice)
     return qty
 
