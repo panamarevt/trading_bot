@@ -55,9 +55,31 @@ def get_symbols_BTC():
 def get_ticker(symbol):
     return client.get_ticker(symbol=symbol)
 
-def GetKlines(symbol, interval='15m'):
-    '''TODO: add option for different intervals'''
-    candles = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_15MINUTE, limit=200)
+def GetKlines(symbol, interval='15m', limit=200):
+    '''Returns a data frame with the following columns as type 'float':
+    [
+        1499040000000,      # Open time (timestamp)
+        "0.01634790",       # Open (open)
+        "0.80000000",       # High (high)
+        "0.01575800",       # Low
+        "0.01577100",       # Close
+        "148976.11427815",  # Volume
+        1499644799999,      # Close time (close_time)
+        "2434.19055334",    # Quote asset volume (quote_av)
+        308,                # Number of trades (trades)
+        "1756.87402397",    # Taker buy base asset volume (tb_base_av)
+        "28.46694368",      # Taker buy quote asset volume (tb_quote_av)
+        "17928899.62484339" # Can be ignored (ignore)
+    ]
+    Possible intervals: 1m, 3m, 5m, 15m, 30m, 1h.
+    '''
+    intervals = {'1m':Client.KLINE_INTERVAL_1MINUTE,
+                 '3m':Client.KLINE_INTERVAL_3MINUTE, 
+                 '5m':Client.KLINE_INTERVAL_5MINUTE,
+                 '15m':Client.KLINE_INTERVAL_15MINUTE,
+                 '30m':Client.KLINE_INTERVAL_30MINUTE,
+                 '1h':Client.KLINE_INTERVAL_1HOUR}
+    candles = client.get_klines(symbol=symbol, interval=intervals[interval], limit=limit)
     #Convert the candles to DataFrame object:
     candles_df = df(candles, columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore' ])                
     return candles_df.astype('float')

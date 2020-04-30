@@ -57,6 +57,10 @@ def check_stochRSI_signal(fastk, slowd, kmin=10, kmax=30):
     return stochRSI_signal
 
 
+def EMA(close, period):
+    '''Returns EMA of given period by accessing EMA from TA library'''
+    return ta.trend.ema(close, period)
+
 ##### Candle patterns:
 
 class Candle:
@@ -96,8 +100,7 @@ class Candle:
         else:
             return False
         return doji
-        
-            
+              
      
         
 
