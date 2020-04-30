@@ -6,6 +6,59 @@ Created on Wed Mar 25 05:12:14 2020
 """
 import numpy as np
 
+# Technical indicators from TA library
+# https://technical-analysis-library-in-python.readthedocs.io/en/latest/
+# https://github.com/bukosabino/ta
+import ta
+
+def get_BBands(close):
+    '''Compute Bollinger Bands'''
+    # Create instance of the class
+    BBands = ta.volatility.BollingerBands(close)
+    
+    middle = BBands.bollinger_mavg()
+    upper = BBands.bollinger_hband()
+    lower = BBands.bollinger_lband()
+    width = BBands.bollinger_wband()
+    
+    return lower, middle, upper, width
+
+def check_lower_BB(close, low, lower):
+    '''Check for lower BB breach'''
+    lower_BB_signal = ((close.iloc[-1] < lower.iloc[-1] or low.iloc[-1] < lower.iloc[-1]) \
+                    or (close.iloc[-2] < lower.iloc[-2] or low.iloc[-2] < lower.iloc[-2]) \
+                    or (close.iloc[-3] < lower.iloc[-3] or low.iloc[-3] < lower.iloc[-3]))
+    return lower_BB_signal
+
+def check_middle_BB(Open, close, low, middle):
+    '''Check for middle BB breach'''
+    middle_BB_signal = (  ( ( (close.iloc[-2] < middle.iloc[-2]) and (Open.iloc[-2] > middle.iloc[-2]) ) \
+                           or ( (low.iloc[-2] < middle.iloc[-2]) and (Open.iloc[-2] > middle.iloc[-2]) \
+                           and (close.iloc[-2] > middle.iloc[-2]) ) )\
+                           and (close.iloc[-1] > middle.iloc[-1])  )
+    return  middle_BB_signal   
+
+def get_StochRSI(close):
+    # RSI
+    RSI = ta.momentum.RSIIndicator(close).rsi()         
+    # Stochastic RSI 
+    stoch_RSI = ta.momentum.StochasticOscillator(RSI,RSI,RSI)
+    fastk =  stoch_RSI.stoch_signal() 
+    #slow_d is 3-day SMA of fast_k
+    slowd = ta.volatility.bollinger_mavg(fastk, n=3)     
+    
+    return fastk, slowd
+
+def check_stochRSI_signal(fastk, slowd, kmin=10, kmax=30):
+    '''Returns True if %K > %D, both go up and kmin < %K < kmax'''
+    stochRSI_signal = (fastk.iloc[-1] > slowd.iloc[-1]) and (fastk.iloc[-1] > fastk.iloc[-2]) and \
+                      (slowd.iloc[-1] > slowd.iloc[-2]) and (kmin < fastk.iloc[-1] < kmax)
+
+    return stochRSI_signal
+
+
+##### Candle patterns:
+
 class Candle:
     def __init__(self, Open, High, Low, Close):
         ''' Initialize candlestick basic parameters: color, high_shadow, low_shadow and body.
@@ -19,7 +72,7 @@ class Candle:
         
     def is_hammer(self, low_to_body = 2.0, high_to_body = 1.5):
         '''We define here that the candle is called 'hammer' if its low to body ratio >= 'low_to_body'
-        and its high to body ratio <= 'high to body'. Body can not be zero.
+        and its high to body ratio <= 'high_to_body'. Body can not be zero.
         In most cases we used 2.0 and 1.5 for these values correspondingly '''
         if self.body == 0:
             return False
@@ -130,3 +183,20 @@ def candle_pattern(last, before_last):
         pattern = 'no'
     
     return pattern
+
+def check_candle_patterns(Open, high, low, close):
+    '''Check if there were some candle patterns. 
+    1st check the last candle, if no patterns, check the one before.
+    Note. Current candle (that has not formed yet) is NOT taken into account'''
+    
+    last = [Open.iloc[-2], high.iloc[-2], low.iloc[-2], close.iloc[-2]]
+    before_last = [Open.iloc[-3], high.iloc[-3], low.iloc[-3], close.iloc[-3]]
+    before_before_last = [Open.iloc[-4], high.iloc[-4], low.iloc[-4], close.iloc[-4]]
+    pattern = candle_pattern(last, before_last)
+    if pattern == 'no': pattern = candle_pattern(before_last, before_before_last)
+    
+    return pattern
+    
+    
+    
+    
