@@ -9,17 +9,15 @@ import numpy as np
 from pandas import DataFrame as df
 import pandas as pd
 
-#Import technical indicators (to be moved from here!)
-import ta
-
 import time
 from datetime import datetime
 
 #from binance_endpoints import get_symbols_BTC, get_ticker
-from binance_endpoints import *   # quick and dirtly solution to check consisntency with previous version. to be changed!
+#from binance_endpoints import *   # quick and dirtly solution to check consisntency with previous version. to be changed!
+import binance_endpoints
 from binance.client import Client
 
-from indicators import candle_pattern
+import indicators
 
 def save_signal(t_curr, coin, price, counter, pattern):
     with open('buy_signals_pattern_new.dat', 'a') as f:
@@ -73,7 +71,7 @@ class C1M:
         TODO: Merge with refresh active!
         '''
         #global active
-        tmp = get_ticker(symb)
+        tmp = binance_endpoints.get_ticker(symb)
         price = np.float64(tmp['lastPrice'])
         volume = np.float64(tmp['quoteVolume'])
         
@@ -86,7 +84,7 @@ class C1M:
         Return list of active pairs as a pandas.DataFrame with 3 columns: symbol, price, 24h volume
         '''
         active = []
-        symbols = get_symbols_BTC()
+        symbols = binance_endpoints.get_symbols_BTC()
         
         for symbol in symbols:
             #Thread(target=get_active, args=(symbol,)).start()
@@ -114,43 +112,21 @@ class C1M:
         ranging_curr = []
         #count = 0
         for symbol in active_list["symbol"]:
-            #Get 15 minute candles
-            candles = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_15MINUTE, limit=200)
-            #Convert the candles to DataFrame object:
-            candles_df = df(candles, columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore' ])            
-            #Create another dataframe with time and open, high, low, close (ohlc) values only
+            
+            candles_df = binance_endpoints.GetKlines(symbol, interval='15m')
+            #Create a dataframe with time and open, high, low, close (ohlc) values only
             ohlc = candles_df.loc[:, ['timestamp', 'open', 'high', 'low', 'close']]
-            ohlc = ohlc.astype(float)
+            
             #Get 24h volume:
             quote_av = candles_df.loc[-96:,'quote_av'].astype(float).sum()
             
-            coin = symbol[:-3]
-            #Compute Bollinger bands using TA-lib from bukosabino            
+            coin = symbol[:-3]                  
             # Get technical indicators:    
             # Bollinger Bands
-            BBands = ta.volatility.BollingerBands(ohlc['close'])
-            #middle = BBands.bollinger_mavg()
-            #upper = BBands.bollinger_hband()
-            lower = BBands.bollinger_lband()
-            width = BBands.bollinger_wband()
-            
-            #RSI and stochastic:
-            #RSI = ta.momentum.RSIIndicator(ohlc['close']).rsi()
-            ##stoch = ta.momentum.StochasticOscillator(ohlc['high'],ohlc['low'],ohlc['close']).stoch()
-            
-            # Stochastic RSI 
-    #        stoch_RSI = ta.momentum.StochasticOscillator(RSI,RSI,RSI)
-    #        #fastk
-    #        fast_k = stoch_RSI.stoch_signal()
-    #        #slow_d is 3-day SMA of fast_k
-    #        slow_d = ta.volatility.bollinger_mavg(fast_k, n=3)
-
-            # Distance benween bands in '%'
+            lower, _, _, width = indicators.get_BBands(ohlc['close'])
             #ranging =  (upper - lower)/lower
             ranging= width/lower
-            ## DEBUG!
-            ##print(ranging)
-            # Compute mean distance in case current ranging is small, but the coin was ranging high recently
+    #        slow_d = ta.volatility.bollinger_mavg(fast_k, n=3)
             mean_range = np.mean(ranging[-96:]) # 96 15 minute candles give 24 hours
             max_range = np.max(ranging[-96:])
             
@@ -164,7 +140,8 @@ class C1M:
         promising = {'symbol':symbols_tmp, 'volume':vol_tmp, 'ranging':ranging_curr}
         print("Promising list formed")
         promising = df(promising)#, columns=['symbol', 'volume'])
-        promising.sort_values(by='volume', inplace=True, ascending=False)
+        #promising.sort_values(by='volume', inplace=True, ascending=False)
+        promising.sort_values(by='ranging', inplace=True, ascending=False)
         print(promising)
         return promising
     
@@ -179,26 +156,27 @@ class C1M:
         
         #for symbol in promising:
         for symbol in promising.loc[:,'symbol']:
-            candles = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_15MINUTE, limit=200)
-            candles_df = df(candles, columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore' ])
-            candles_df = candles_df.astype('float')
-    
-            close = candles_df['close']
-            low = candles_df['low']
-            Open = candles_df['open']
-            high = candles_df['high']
-            volume = candles_df['quote_av']
             
+            try:
+                candles_df = binance_endpoints.GetKlines(symbol)
+            except Exception as e:
+                print(f"Warning: didn't get klines for {symbol}!", e)
+                continue
+            
+            Open, high = candles_df['open'], candles_df['high']
+            low, close = candles_df['low'], candles_df['close']
+            volume = candles_df['quote_av']
             
             coin = symbol[:-3]
             
+            # Check if coin was bought in previous step of the loop
             if coin in list(self.trading_coins):
                 if 'orderId' in self.trading_coins[coin]['order'].keys():
-                    check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin)
+                    binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin)
                 else:
-                    check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin)
-                                
+                    binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin)
             
+            # Check if coin signalled   in previous step of the loop                              
             if coin in self.triggered.keys():
                 #status = check_profit(triggered[coin]['coin'], close.iloc[-1], triggered[coin]['start_signal'], triggered[coin]['buy_price'], triggered[coin]['buy_time'] )
                 status = check_profit_new(self.triggered[coin], close.iloc[-1])
@@ -208,46 +186,26 @@ class C1M:
                 else: 
                     del self.triggered[coin]        
                 
-            # Get technical indicators:
-    
+            # Get technical indicators:    
             # Bollinger Bands
-            BBands = ta.volatility.BollingerBands(close)
-            #ohlc.values
-            middle = BBands.bollinger_mavg()
-            upper = BBands.bollinger_hband()
-            lower = BBands.bollinger_lband()
-            width = BBands.bollinger_wband()
-            
+            lower, middle, upper, width = indicators.get_BBands(close) 
             ranging= width/lower *100 # in %
-    
-            lower_BB_signal = ((close.iloc[-1] < lower.iloc[-1] or low.iloc[-1] < lower.iloc[-1]) \
-            or (close.iloc[-2] < lower.iloc[-2] or low.iloc[-2] < lower.iloc[-2]) \
-            or (close.iloc[-3] < lower.iloc[-3] or low.iloc[-3] < lower.iloc[-3]))
-    
-            middle_BB_signal = (  ( ( (close.iloc[-2] < middle.iloc[-2]) and (Open.iloc[-2] > middle.iloc[-2]) ) \
-            or ( (low.iloc[-2] < middle.iloc[-2]) and (Open.iloc[-2] > middle.iloc[-2]) and (close.iloc[-2] > middle.iloc[-2]) ) )\
-            and (close.iloc[-1] > middle.iloc[-1])  )       
+            # Check for Bollinger band breach (lower or middle):
+            lower_BB_signal = indicators.check_lower_BB(close, low, lower)
+            middle_BB_signal = indicators.check_middle_BB(Open, close, low, middle)
+      
            # Check if range is > 4% and price is hitting lower Bollinger Bands:
-            #!!! Check Bollinger signal provided by ta library!
             if ranging.iloc[-1] > self.min_ranging :
                 # Note. Use iloc() to get access to position (same as indexing in numpy arrays). Reason that there is no negative indexing in pandas.Series        
-                if lower_BB_signal or middle_BB_signal: #print("Hitting Bollinger: %s at %.8f" % (coin, close[-1]) ) 
-                    # If Bollingers are hit: compute stochastic RSI            
-                    
-                    #RSI and stochastic:
-                    RSI = ta.momentum.RSIIndicator(close).rsi()
-                    ##stoch = ta.momentum.StochasticOscillator(ohlc['high'],ohlc['low'],ohlc['close']).stoch()            
-                    # Stochastic RSI 
-                    stoch_RSI = ta.momentum.StochasticOscillator(RSI,RSI,RSI)
-                    #fastk; convert to numpy arrays to allow negative index -- DON't do that!
-                    fastk =  stoch_RSI.stoch_signal() 
-                    #slow_d is 3-day SMA of fast_k
-                    slowd = ta.volatility.bollinger_mavg(fastk, n=3) 
+                if lower_BB_signal or middle_BB_signal: 
+                    # If Bollingers are hit: compute stochastic RSI                                
+                    #StochasticRSI:
+                    fastk, slowd = indicators.get_StochRSI(close)
                     #Stochastic RSI signal fask > slowd, both going up and 10 < fastk < 30
-                    stochRSI_signal = (fastk.iloc[-1] > slowd.iloc[-1]) and (fastk.iloc[-1] > fastk.iloc[-2]) and (slowd.iloc[-1] > slowd.iloc[-2]) and (10 < fastk.iloc[-1] < 30)
+                    stochRSI_signal = indicators.check_stochRSI_signal(fastk, slowd, kmin=10, kmax=30)
                     #Condition that distance from buy price to mid(up) bollinder band is greater than 1.5% 
                     if stochRSI_signal:    
-                        buy_price = float(get_buy_price(symbol,self.BUY_METHOD))
+                        buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
                         if lower_BB_signal:
                             dist_to_BB = 100*(middle.iloc[-1] - buy_price)/buy_price
                             price_to_range = (buy_price - lower.iloc[-1])/(middle.iloc[-1] - lower.iloc[-1])
@@ -263,14 +221,11 @@ class C1M:
                         # Get the current time for output:                   
                         now = datetime.now()
                         current_time = now.strftime("%d/%m/%y %H:%M:%S")
-                        #current_time = now.strftime("%D %H:%M:%S")  # With Day. !!! Figure out how to adjust format
-                        # About to annouce buy signal.
-                        # But first check if the coin was already signalling less than 5 minutes ago                
+                        # Check if the coin was already signalling less than 5 minutes ago:           
                         #counter = 0
                         if coin in self.triggered.keys(): 
                             # Get current time to measure time intervals between buy signals of a coin
-                            time_now = time.time()
-    
+                            time_now = time.time()    
     #                        # If the coin was signalling more than 5 minutes (300 sec) ago, remove it from the list
                             if time_now - self.triggered[coin]['start_signal'] > 300: 
                                 buy_price = self.triggered[coin]['buy_price']
@@ -283,18 +238,15 @@ class C1M:
                                
                         else:
                             #buy_price = close.iloc[-1]
-                            buy_price = float(get_buy_price(symbol,self.BUY_METHOD))
+                            buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
                             min_price = buy_price
                             print(current_time, "BUY signal! %s at %.8f Stoch RSI:" % (coin, buy_price), fastk.iloc[-1], slowd.iloc[-1])
                             start_signal = time.time()
                             #save signaling coins to file:
                             counter = 0
                             # Check if there was a candle pattern 1 or 2 canclesticks before:
-                            last = [Open.iloc[-2], high.iloc[-2], low.iloc[-2], close.iloc[-2]]
-                            before_last = [Open.iloc[-3], high.iloc[-3], low.iloc[-3], close.iloc[-3]]
-                            before_before_last = [Open.iloc[-4], high.iloc[-4], low.iloc[-4], close.iloc[-4]]
-                            pattern = candle_pattern(last, before_last)
-                            if pattern == 'no': pattern = candle_pattern(before_last, before_before_last)
+                            pattern = indicators.check_candle_patterns(Open, high, low, close)
+                            
                             save_signal(current_time, coin, buy_price, counter, pattern)
                             # Create a new item in the dictionary of signalling coins, where coin is the key and time at the 1st signal is the item
                             status = 0
@@ -312,7 +264,7 @@ class C1M:
                             
                                 print("Placing Buy Order")
                                 try:
-                                    order, am_btc = place_buy_order(symbol,self.MAX_TRADES,n_trades,self.BUY_METHOD,self.DEPOSIT_FRACTION)
+                                    order, am_btc = binance_endpoints.place_buy_order(symbol,self.MAX_TRADES,n_trades,self.BUY_METHOD,self.DEPOSIT_FRACTION)
                                 except Exception as e:
                                     print("Exception during pacing BUY order occured", e)
                                     continue                             
@@ -321,7 +273,7 @@ class C1M:
                                     buy_price = order['price']
                                     print("Placing OCO order", symbol)
                                     try:                                    
-                                        order = place_oco_order(symbol, buy_price, take_profit=0.017, stop_loss = 0.02)
+                                        order = binance_endpoints.place_oco_order(symbol, buy_price, take_profit=0.017, stop_loss = 0.02)
                                     except Exception as e:
                                         print("Exception during placing OCO order:", symbol, buy_price)
                                         print(e)
@@ -329,7 +281,7 @@ class C1M:
                                     #If we didn't use market buy then we have to check the order status                                    
                                     print("Check order status")
                                     try:
-                                        order = check_order_status(order)
+                                        order = binance_endpoints.check_order_status(order)
                                     except Exception as e:
                                         print("Didn't manage to check order status", e)
                                 
@@ -357,17 +309,13 @@ class C1M:
         #start_loop = time.time()
         
         while True:        
-            #create list of 'active' coins
-            #active_list = refresh_active()
-            #create list of 'promising' coins which are ranging more than 4%
-            #promising = get_promising(active_list)
             # Watch promising coins
             start_watch = time.time()   
             #args = (promising,)
             #try_func(watch, 10,3600, *args)
             self.search_signals(promising)
             end_watch = time.time()
-            
+            #Check how many coins are in trade at the moment
             are_trading = len(self.trading_coins)
             #If there are coins in trade, check their status
             if are_trading > 0: 
@@ -376,38 +324,34 @@ class C1M:
                     if 'orderId' in self.trading_coins[item]['order'].keys():
                         print("BUY PENDING:", item)
                         try:
-                            check_buy_order(self.trading_coins[item]['order'], self.trading_coins, item)
+                            binance_endpoints.check_buy_order(self.trading_coins[item]['order'], self.trading_coins, item)
                         except Exception as e:
                             print("Didn't check BUY order", item)
                             print(e)
                     else:
                         print("OCO:", item)
                         try:
-                            check_oco_order(self.trading_coins[item]['order'], self.trading_coins, item)
+                            binance_endpoints.check_oco_order(self.trading_coins[item]['order'], self.trading_coins, item)
                         except Exception as e:
                             print("Didn't check OCO order", item)
-                            print(e)
-                            
+                            print(e)                            
     
             # Measure total time spent for watching:
             total_watch += end_watch - start_watch
             # If watching time is more than 5 minutes, update promising list: 
             if total_watch > promise_update_interval: 
                 #args = (active_list,)
-                #promising = get_promising(active_list)
                 #promising = try_func(get_promising, 10, 3600, *args)
                 promising = self.get_promising(active_list)
                 last_active_uptade += total_watch
                 total_watch = 0
             # Update active list every 10 minutes
             if last_active_uptade > active_update_interval:
-                #active_list = refresh_active()
                 #active_list = try_func(refresh_active)
                 active_list = self.refresh_active()
                 #args = (active_list,)
                 promising = self.get_promising(active_list)
                 #promising = try_func(get_promising, 10, 3600, *args)
-                #are_trading = len(trade_modeling)can
     
                 are_trading = len(self.trading_coins)
                 print("%d coins are in trade:" % are_trading)            

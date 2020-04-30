@@ -6,6 +6,8 @@ Created on Wed Mar 25 05:15:10 2020
 """
 
 import numpy as np
+from pandas import DataFrame as df
+
 import time
 from datetime import datetime
 
@@ -52,6 +54,14 @@ def get_symbols_BTC():
 
 def get_ticker(symbol):
     return client.get_ticker(symbol=symbol)
+
+def GetKlines(symbol, interval='15m'):
+    '''TODO: add option for different intervals'''
+    candles = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_15MINUTE, limit=200)
+    #Convert the candles to DataFrame object:
+    candles_df = df(candles, columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore' ])                
+    return candles_df.astype('float')
+
 
 def save_filled_oco(coin_dict, profit):
     '''Saves info about filled OCO orders in a file'''

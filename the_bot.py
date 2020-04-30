@@ -11,4 +11,4 @@ import strategies
 c1m = strategies.C1M()
 
 # Start the strategy:
-c1m.c1m_flow(MAX_TRADES=2, DEPOSIT_FRACTION=0.01)
+c1m.c1m_flow(MAX_TRADES=0, DEPOSIT_FRACTION=0.01)
