@@ -109,6 +109,15 @@ def get_buy_price(symbol, BUY_METHOD):
         buy_price = order_book['bids'][1][0]
     return buy_price
 
+def get_rec_price(symbol, BuyPrice, buy_below=0.5):
+    '''Compute recommended Buy Price. 
+    buy_below - shows by how much % we shall buy below the buy price'''
+    if buy_below == 0: return BuyPrice
+    
+    rec_price = (1.0-0.01*buy_below) * BuyPrice
+    price_prec = get_price_precision(symbol)    
+    return np.round(rec_price, price_prec)
+
 def weighted_avg(fills, symbol):
     '''Computes weghted average price of a market order
     fills is array of dictionaries with prices and quantities (from market order API response)
@@ -153,27 +162,54 @@ def place_market_buy_order(symbol, qty):
     market_order = client.order_market_buy(symbol=symbol, quantity=qty)
     return market_order
     
-def place_buy_order(symbol,MAX_TRADES,in_trade, BUY_METHOD, DEPOSIT_FRACTION):
+def place_buy_order(symbol,MAX_TRADES,in_trade, BUY_METHOD, DEPOSIT_FRACTION, trade_type='REAL', buy_below=0.5):
     '''MAX_TRADES is maximum number of simulateneous trades
     in_trade - amount of coins that are in trade at the moment
     BUY_METHOD should be 'MARKET' or 'LIMIT'
     '''
     #amount_btc = 0.0058 #Our BTC amount for each trade (about $50 as of 01:40 29.02.2020)
     BuyPrice = get_buy_price(symbol, BUY_METHOD)
+    rec_price = get_rec_price(symbol, float(BuyPrice), buy_below=buy_below)
+    BuyPrice = f'{rec_price:.8f}'
     #qty = amount_btc/np.float(BuyPrice)
     #qty = np.round(qty,0)
     qty = get_buy_amount(BuyPrice,MAX_TRADES,in_trade,deposit_fraction=DEPOSIT_FRACTION)
     prec = get_lot_precision(symbol)
     qty = float(truncate(qty, prec))
     
-    if BUY_METHOD == 'MARKET':
-        order = place_market_buy_order(symbol, qty)
-        BuyPrice = weighted_avg(order['fills'], symbol)
-        order['price'] = BuyPrice # !!! Check if market order API response returns weighted average price!!!!!!!
+    if trade_type == 'REAL':
+        if BUY_METHOD == 'MARKET':
+            order = place_market_buy_order(symbol, qty)
+            BuyPrice = weighted_avg(order['fills'], symbol)
+            order['price'] = BuyPrice # !!! Check if market order API response returns weighted average price!!!!!!!
+        else:
+            order = client.order_limit_buy(symbol=symbol, quantity=qty, price=BuyPrice)
     else:
-        order = client.order_limit_buy(symbol=symbol, quantity=qty, price=BuyPrice)
-    
-    with open('placed_buy_orders.dat', 'a') as f:
+        #trade_type == 'PAPER':
+        order = {'symbol': symbol,
+                 'orderId': 'PAPER',
+                 'orderListId': -1,
+                 'clientOrderId': 'beMu1tPLtTpJlEYjuXSzGR',
+                 'price': BuyPrice,
+                 'origQty': qty,
+                 'executedQty': '0.0',
+                 'cummulativeQuoteQty': 0.0,
+                 'status': 'EXECUTING',
+                 'timeInForce': 'GTC',
+                 'type': 'LIMIT',
+                 'side': 'BUY',
+                 'stopPrice': '0.00000000',
+                 'icebergQty': '0.00000000',
+                 'time': 1000*time.time(),
+                 'updateTime': 1000*time.time(),
+                 'isWorking': True,
+                 'origQuoteOrderQty': '0.00000000'}
+        
+    if trade_type == 'PAPER':
+        fname = 'placed_buy_orders_paper.dat'
+    else:
+        fname = 'placed_buy_orders.dat'
+    with open(fname, 'a') as f:
         now = datetime.now()
         time_curr = now.strftime("%d/%m/%y %H:%M:%S")
         am_btc = qty*float(BuyPrice)                        
@@ -196,7 +232,7 @@ def get_buy_amount(BuyPrice, MAX_TRADES, in_trade, asset='BTC', deposit_fraction
     qty = amount_btc/float(BuyPrice)
     return qty
 
-def place_oco_order(symbol, buy_price, take_profit = 0.015, stop_loss = 0.03):
+def place_oco_order(symbol, buy_price, take_profit = 0.015, stop_loss = 0.03, trade_type='REAL'):
     #from binance.enums import *
     buy_price = float(buy_price)
     #price = np.round( (1+take_profit)*buy_price, 8)
@@ -218,15 +254,66 @@ def place_oco_order(symbol, buy_price, take_profit = 0.015, stop_loss = 0.03):
     prec = get_lot_precision(symbol)
     qntity = float(truncate(qntity, prec)) #It's important to truncate qunatity, NOT to round it, otherwise may be not enough balance
     #print("Place OCO order for %s for %s with stop price %s and limit price %s" % (symbol, price, stop_price, stop_limit_price) )    
-    oco_order = client.create_oco_order(symbol=symbol,side=SIDE_SELL, stopLimitTimeInForce=TIME_IN_FORCE_GTC,\
+    if trade_type == 'REAL':
+        oco_order = client.create_oco_order(symbol=symbol,side=SIDE_SELL, stopLimitTimeInForce=TIME_IN_FORCE_GTC,\
                                         quantity=qntity, stopPrice=stop_price, price=price,\
                                         stopLimitPrice=stop_limit_price)
+    if trade_type == 'PAPER':
+        oco_order = place_paper_oco(symbol,price,stop_price,stop_limit_price)
     now = datetime.now()
     time_curr = now.strftime("%d/%m/%y %H:%M:%S")
-    with open('placed_oco_orders.dat', 'a') as f:
+    if trade_type == 'PAPER':
+        fname = 'placed_oco_orders_paper.dat'
+    else:
+        fname = 'placed_oco_orders.dat'    
+    with open(fname, 'a') as f:
         f.write('%s,%s,%s,%s,%s\n' % (time_curr, symbol, price, stop_price, stop_limit_price))
     #sell_limit = client.order_limit_sell(symbol=symbol, quantity=qntity, price=price)
     #return sell_limit
+    return oco_order
+
+def place_paper_oco(symbol, price, stop_price, stop_limit_price):
+    '''Called from place_oco_order'''
+    oco_order = {'orderListId': 'PAPER',
+             'contingencyType': 'OCO',
+             'listStatusType': 'EXEC_STARTED',
+             'listOrderStatus': 'EXECUTING',
+             'listClientOrderId': '4vtKEEteQ4sMxeeJdedcFY',
+             'transactionTime': 1000*time.time(),
+             'symbol': symbol,
+             'orders': [{'symbol': symbol,
+               'orderId': 1,
+               'clientOrderId': '6RTVZNxjMTBBt4UOL350Xm'},
+              {'symbol': symbol,
+               'orderId': 'PAPER',
+               'clientOrderId': 'jAdBKYiZNYTeGP2lB34P2t'}],
+             'orderReports': [{'symbol': symbol,
+               'orderId': 7897973,
+               'orderListId': 2804760,
+               'clientOrderId': '6RTVZNxjMTBBt4UOL350Xm',
+               'transactTime': 1000*time.time(),
+               'price': stop_limit_price,
+               'origQty': '1109.00000000',
+               'executedQty': '0.00000000',
+               'cummulativeQuoteQty': '0.00000000',
+               'status': 'NEW',
+               'timeInForce': 'GTC',
+               'type': 'STOP_LOSS_LIMIT',
+               'side': 'SELL',
+               'stopPrice': stop_price},
+              {'symbol': symbol,
+               'orderId': 'PAPER',
+               'orderListId': 2804760,
+               'clientOrderId': 'jAdBKYiZNYTeGP2lB34P2t',
+               'transactTime': 1000*time.time(),
+               'price': price,
+               'origQty': '1109.00000000',
+               'executedQty': '0.00000000',
+               'cummulativeQuoteQty': '0.00000000',
+               'status': 'NEW',
+               'timeInForce': 'GTC',
+               'type': 'LIMIT_MAKER',
+               'side': 'SELL'}]}
     return oco_order
 
 def check_order_status(order):
@@ -239,11 +326,56 @@ def check_order_status(order):
     #client.order_market_sell(symbol='XTZBTC',quantity=qntity)
     return order_status
 
+def check_paper_order(order, trading_coins):
+    order_status = 'EXECUTING'    
+    df_ohlc = GetKlines(order['symbol'], interval='1m')
+    coin = order['symbol'][:-3]
+    if 'orderId' in order.keys():
+    #if order['orderId'] == 'PAPER':
+        # If we check BUY order
+        time_cond = df_ohlc['timestamp'] >= int(order['time'])
+        if order['side'] == 'BUY':
+            if df_ohlc['low'][time_cond].min() <= float(order['price'])  :
+                order['status'] = 'FILLED'
+                order['updateTime'] = 1000*time.time()
+                order_status = order['status']
+                elapsed = (order['updateTime'] - order['time'])/(60*1000)
+                print(f"BUY order for {order['symbol']} filled in {elapsed} minutes")
+    else:
+        # If we check OCO order
+        time_cond = df_ohlc['timestamp'] >= int(order['transactionTime'])
+        stop_loss_order = order['orderReports'][0]
+        limit_maker = order['orderReports'][1]    
+        if df_ohlc['low'][time_cond].min() <= float(stop_loss_order['stopPrice']) :
+            stop_loss_order['status'] = 'FILLED'
+            stop_loss_order['updateTime'] = 1000*time.time()            
+            elapsed = (order['transactionTime'] - stop_loss_order['updateTime'])/(60*1000)
+            print(f"OCO STOP LOSS filled: {order['symbol']}, elapsed: {elapsed}")
+            profit = (float(stop_loss_order['price']) - float(trading_coins[coin]['buy_price']))/float(trading_coins[coin]['buy_price'])
+            trading_coins[coin]['profit'] = profit
+            trading_coins[coin]['g_profit'] = 0.01*profit*trading_coins[coin]['am_btc']
+            order_status = stop_loss_order['status']
+            
+        if df_ohlc['high'][time_cond].max() >= float(limit_maker['price']) :
+            limit_maker['status'] = 'FILLED'
+            limit_maker['updateTime'] = 1000*time.time()            
+            elapsed = (order['transactionTime'] - limit_maker['updateTime'])/(60*1000)
+            print(f"OCO LIMIT filled: {order['symbol']}, elapsed: {elapsed}")
+            profit = (float(limit_maker['price']) - float(trading_coins[coin]['buy_price']))/float(trading_coins[coin]['buy_price'])
+            trading_coins[coin]['profit'] = profit
+            trading_coins[coin]['g_profit'] = 0.01*profit*trading_coins[coin]['am_btc']
+            order_status = limit_maker['status']
+        if order_status == 'FILLED':
+            save_filled_oco(trading_coins[coin], profit)
+            del trading_coins[coin]
+        order['status'] = order_status
+    return order
+
 def cancel_order(order):
     result = client.cancel_order(symbol=order['symbol'], orderId=order['orderId'])
     return result
 
-def check_buy_order(order, trading_coins, coin):    
+def check_buy_order(order, trading_coins, coin, trade_type='REAL'):    
     '''order status response:
        {'symbol': 'WRXBTC',
          'orderId': 7895233,
@@ -264,10 +396,13 @@ def check_buy_order(order, trading_coins, coin):
          'isWorking': True,
          'origQuoteOrderQty': '0.00000000'}
     '''
-    #!!!TODO: Improce Partial filling
-    BUY_TIME_LIMIT = 10
+    #!!!TODO: Improve Partial filling
+    BUY_TIME_LIMIT = 30 # To be set in the strategy class!
     try:
-        trading_coins[coin]['order'] = check_order_status(order)
+        if trade_type == 'REAL':
+            trading_coins[coin]['order'] = check_order_status(order)
+        else:
+            trading_coins[coin]['order'] = check_paper_order(order, trading_coins)
     except Exception as e:
         print("Warning didn't manage to check order status! (Called from fuction 'check buy order')")
         print(e)
@@ -275,11 +410,11 @@ def check_buy_order(order, trading_coins, coin):
     try:
         place_time = trading_coins[coin]['order']['time']/1000 #Time in Binance is given in milliseconds, convert to seconds here.
     except KeyError:
-        place_time = trading_coins[coin]['order']['transactTime']/1000
+        place_time = trading_coins[coin]['order']['transactionTime']/1000
     time_curr = time.time()
     elapsed_min = (time_curr - place_time)/60
     if elapsed_min > BUY_TIME_LIMIT:
-       order = cancel_order(order)
+       if trade_type == 'REAL': order = cancel_order(order)
        print("Buy order didn't fill in %d minutes" % BUY_TIME_LIMIT)
        executedQty = float(trading_coins[coin]['order']['executedQty'])
        if executedQty > 0:
@@ -292,15 +427,15 @@ def check_buy_order(order, trading_coins, coin):
                del trading_coins[coin]
        status = "CANCELLED"
        del trading_coins[coin]
-    if status == "FILLED":
+    if status == "FILLED":        
         try:
-            trading_coins[coin]['order'] = place_oco_order(order['symbol'], order['price'])
+            trading_coins[coin]['order'] = place_oco_order(order['symbol'], order['price'], trade_type=trade_type )
         except Exception as e:
-            print("WARNING!!!! OCO order didn't place!", e)
-        
+            print("WARNING!!!! OCO order didn't place!", e)    
     return status
+
         
-def check_oco_order(order, trading_coins, coin, time_limit = 10):
+def check_oco_order(order, trading_coins, coin, time_limit = 10, trade_type='REAL'):
     '''OCO order response:
     {'orderListId': 2804760,
          'contingencyType': 'OCO',
@@ -345,6 +480,9 @@ def check_oco_order(order, trading_coins, coin, time_limit = 10):
     '''
     #OCO_TIME_LIMIT = 240
     #trading_coins[coin]['order'] = check_order_status(order)
+    if trade_type == 'PAPER':
+        status = check_paper_order(order, trading_coins)
+        return status
     #OCO order consists of 2 orders. Check their status separetely:
     #Grab order responses:
     stop_loss_order = trading_coins[coin]['order']['orderReports'][0]
@@ -450,21 +588,6 @@ def sell_leftovers(symbol):
             print("Warning! Market sell didn't execute!" , e, symbol )
         
     
-#def follow_buy_order(order):
-#    status = ''
-#    start_time = time.time()
-#    MAX_PENDING_TIME = 30 #minutes
-#    while status != 'FILLED':
-#        status = check_order_status(order)['status']
-#        elapsed = (time.time() - start_time)/60
-#        print(status)
-#        if elapsed > MAX_PENDING_TIME : 
-#            cancel_order(order)
-#            print( "Cancel order, didn't fill in %.1f minutes" % elapsed )
-#            break
-
-#def follow_oco_order(order):
-#    pass
 
 def get_lot_precision(symbol):
     '''return precision of the lot for the order

@@ -172,9 +172,9 @@ class C1M:
             # Check if coin was bought in previous step of the loop
             if coin in list(self.trading_coins):
                 if 'orderId' in self.trading_coins[coin]['order'].keys():
-                    binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin)
+                    binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
                 else:
-                    binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin)
+                    binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
             
             # Check if coin signalled   in previous step of the loop                              
             if coin in self.triggered.keys():
@@ -240,7 +240,8 @@ class C1M:
                             #buy_price = close.iloc[-1]
                             buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
                             min_price = buy_price
-                            print(current_time, "BUY signal! %s at %.8f Stoch RSI:" % (coin, buy_price), fastk.iloc[-1], slowd.iloc[-1])
+                            rec_price = binance_endpoints.get_rec_price(symbol,buy_price)
+                            print(current_time, f"BUY signal! {coin} at {buy_price:.8f}; rec: {rec_price:.8f} Stoch RSI: ", fastk.iloc[-1], slowd.iloc[-1])
                             start_signal = time.time()
                             #save signaling coins to file:
                             counter = 0
@@ -263,8 +264,9 @@ class C1M:
                                 #in_trade = len(trading_coins)
                             
                                 print("Placing Buy Order")
+                                    
                                 try:
-                                    order, am_btc = binance_endpoints.place_buy_order(symbol,self.MAX_TRADES,n_trades,self.BUY_METHOD,self.DEPOSIT_FRACTION)
+                                    order, am_btc = binance_endpoints.place_buy_order(symbol,self.MAX_TRADES,n_trades,self.BUY_METHOD,self.DEPOSIT_FRACTION, trade_type=self.TRADE_TYPE)
                                 except Exception as e:
                                     print("Exception during pacing BUY order occured", e)
                                     continue                             
@@ -279,26 +281,30 @@ class C1M:
                                         print(e)
                                 else:
                                     #If we didn't use market buy then we have to check the order status                                    
-                                    print("Check order status")
-                                    try:
-                                        order = binance_endpoints.check_order_status(order)
-                                    except Exception as e:
-                                        print("Didn't manage to check order status", e)
+                                    #print("Check order status")
+                                    if self.TRADE_TYPE == 'REAL':
+                                        print("Check order status")
+                                        try:
+                                            order = binance_endpoints.check_order_status(order)
+                                        except Exception as e:
+                                            print("Didn't manage to check order status", e)
                                 
                                 self.trading_coins[coin] = {'coin':coin, 'start_signal':start_signal, 'buy_price':buy_price, \
-                                          'buy_time':current_time, 'status':status, 'counter':counter, \
+                                          'rec_price':rec_price, 'buy_time':current_time, 'status':status, 'counter':counter, \
                                           'vol_1hr':vol_1hr, 'pattern':pattern, 'origin':origin,\
                                           'ranging':ranging.iloc[-1], 'fastk15': fastk.iloc[-1], 'min_price':min_price, 'order':order, 'am_btc': am_btc,'n_oco':0 }
      
         
     
-    def c1m_flow(self, active_update_interval = 600, promise_update_interval = 300, BUY_METHOD='LIMIT', MAX_TRADES=4, DEPOSIT_FRACTION=0.1):
+    def c1m_flow(self, active_update_interval = 600, promise_update_interval = 300, 
+                 TRADE_TYPE='PAPER', BUY_METHOD='LIMIT', MAX_TRADES=4, DEPOSIT_FRACTION=0.1):
         '''Main flow of the strategy: 
         get_active -> get_promising -> search_signals -> repeat'''
         
-        self.BUY_METHOD = BUY_METHOD
-        self.MAX_TRADES = MAX_TRADES
-        self.DEPOSIT_FRACTION = DEPOSIT_FRACTION
+        self.BUY_METHOD = BUY_METHOD # Specify if we use LIMIT or MARKET order
+        self.MAX_TRADES = MAX_TRADES # Number of open positions
+        self.DEPOSIT_FRACTION = DEPOSIT_FRACTION # Fraction of the deposit in BTC we use for trading
+        self.TRADE_TYPE = TRADE_TYPE
         
         active_list = self.refresh_active()
         promising = self.get_promising(active_list)
@@ -307,7 +313,7 @@ class C1M:
         last_active_uptade = 0
         
         #start_loop = time.time()
-        
+        # Start infinite loop:
         while True:        
             # Watch promising coins
             start_watch = time.time()   
@@ -324,14 +330,14 @@ class C1M:
                     if 'orderId' in self.trading_coins[item]['order'].keys():
                         print("BUY PENDING:", item)
                         try:
-                            binance_endpoints.check_buy_order(self.trading_coins[item]['order'], self.trading_coins, item)
+                            binance_endpoints.check_buy_order(self.trading_coins[item]['order'], self.trading_coins, item, self.TRADE_TYPE)
                         except Exception as e:
                             print("Didn't check BUY order", item)
                             print(e)
                     else:
                         print("OCO:", item)
                         try:
-                            binance_endpoints.check_oco_order(self.trading_coins[item]['order'], self.trading_coins, item)
+                            binance_endpoints.check_oco_order(self.trading_coins[item]['order'], self.trading_coins, item, trade_type=self.TRADE_TYPE)
                         except Exception as e:
                             print("Didn't check OCO order", item)
                             print(e)                            
