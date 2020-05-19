@@ -15,6 +15,8 @@ from binance.client import Client
 from binance.enums import *
 import keys
 
+import os
+
 client = Client(api_key=keys.Pkey, api_secret=keys.Skey)
 
 
@@ -85,17 +87,45 @@ def GetKlines(symbol, interval='15m', limit=200):
     return candles_df.astype('float')
 
 
+#def save_filled_oco(coin_dict, profit):
+#    '''Saves info about filled OCO orders in a file'''
+#    elapsed = (time.time() - coin_dict['start_signal'])/60
+#    bought_time, coin, bought_price, pattern,origin,ranging,vol_1hr,fastk15,min_price = \
+#    coin_dict['buy_time'],coin_dict['coin'],float(coin_dict['buy_price']),coin_dict['pattern'], coin_dict['origin'],\
+#    coin_dict['ranging'],coin_dict['vol_1hr'],coin_dict['fastk15'],coin_dict['min_price']
+#    am_btc, g_profit = coin_dict['am_btc'], coin_dict['g_profit']
+#    with open('filled_oco_orders_market.dat', 'a') as f:
+#        f.write("%s,%s,%.8f,%.2f,%.1f,%s,%s,%.2f,%.3f,%.2f,%.8f,%.8f,%.8f\n" % (bought_time, coin, bought_price, profit, elapsed,\
+#                                                                      pattern,origin,ranging,vol_1hr,fastk15,min_price,\
+#                                                                      am_btc,g_profit))
+
 def save_filled_oco(coin_dict, profit):
     '''Saves info about filled OCO orders in a file'''
     elapsed = (time.time() - coin_dict['start_signal'])/60
-    bought_time, coin, bought_price, pattern,origin,ranging,vol_1hr,fastk15,min_price = \
-    coin_dict['buy_time'],coin_dict['coin'],float(coin_dict['buy_price']),coin_dict['pattern'], coin_dict['origin'],\
-    coin_dict['ranging'],coin_dict['vol_1hr'],coin_dict['fastk15'],coin_dict['min_price']
-    am_btc, g_profit = coin_dict['am_btc'], coin_dict['g_profit']
-    with open('filled_oco_orders_market.dat', 'a') as f:
-        f.write("%s,%s,%.8f,%.2f,%.1f,%s,%s,%.2f,%.3f,%.2f,%.8f,%.8f,%.8f\n" % (bought_time, coin, bought_price, profit, elapsed,\
-                                                                      pattern,origin,ranging,vol_1hr,fastk15,min_price,\
-                                                                      am_btc,g_profit))
+    #coin = coin_dict['coin']
+    # Remove the items that we don't want to record:
+    del coin_dict['order']
+    del coin_dict['status']
+    del coin_dict['counter']
+    filename = 'filled_oco_orders_market.dat'
+    with open(filename, 'a') as f:
+        empty = os.path.getsize(filename) == 0
+        if empty:
+            for key in coin_dict.keys(): 
+                if key == 'profit' : continue
+                f.write(f'{key},')
+            f.write('elapsed,profit\n')
+        f.write(f'{coin_dict["buy_time"]},{coin_dict["coin"]},{coin_dict["buy_price"]:.8f},')
+        keys = list(coin_dict.keys())
+        for key in keys[3:] :
+            print (key)
+            if key in ['pattern','origin'] : f.write(f'{coin_dict[key]},')
+            elif key in ['rec_price', 'min_price', 'am_btc', 'g_profit']: f.write(f'{coin_dict[key]:.8f},')
+            elif key in ['ranging', 'vol_1hr', 'fastk15', 'time_to_min']: f.write(f'{coin_dict[key]:.2f},')
+            elif key == 'profit' : continue
+            else: f.write(f'{coin_dict[key]},')
+        f.write(f'{elapsed:.2f},{profit:.2f}\n')
+
 
 
 def get_buy_price(symbol, BUY_METHOD):
@@ -327,9 +357,12 @@ def check_order_status(order):
     return order_status
 
 def check_paper_order(order, trading_coins):
+    '''Check status of the order. It can be BUY order or OCO order'''
     order_status = 'EXECUTING'    
+    # Get 1-minute candlestick data:
     df_ohlc = GetKlines(order['symbol'], interval='1m')
     coin = order['symbol'][:-3]
+    # If the 'order' dictionary has 'orderID' key, then it is a BUY order:
     if 'orderId' in order.keys():
     #if order['orderId'] == 'PAPER':
         # If we check BUY order
@@ -341,17 +374,19 @@ def check_paper_order(order, trading_coins):
                 order_status = order['status']
                 elapsed = (order['updateTime'] - order['time'])/(60*1000)
                 print(f"BUY order for {order['symbol']} filled in {elapsed} minutes")
+                trading_coins[coin]['time_to_buy'] = elapsed
     else:
         # If we check OCO order
         time_cond = df_ohlc['timestamp'] >= int(order['transactionTime'])
         stop_loss_order = order['orderReports'][0]
         limit_maker = order['orderReports'][1]    
-        if df_ohlc['low'][time_cond].min() <= float(stop_loss_order['stopPrice']) :
+        lowest_price = df_ohlc['low'][time_cond].min()
+        if lowest_price <= float(stop_loss_order['stopPrice']) :
             stop_loss_order['status'] = 'FILLED'
             stop_loss_order['updateTime'] = 1000*time.time()            
             elapsed = (order['transactionTime'] - stop_loss_order['updateTime'])/(60*1000)
             print(f"OCO STOP LOSS filled: {order['symbol']}, elapsed: {elapsed}")
-            profit = (float(stop_loss_order['price']) - float(trading_coins[coin]['buy_price']))/float(trading_coins[coin]['buy_price'])
+            profit = 100*(float(stop_loss_order['price']) - float(trading_coins[coin]['rec_price']))/float(trading_coins[coin]['rec_price'])
             trading_coins[coin]['profit'] = profit
             trading_coins[coin]['g_profit'] = 0.01*profit*trading_coins[coin]['am_btc']
             order_status = stop_loss_order['status']
@@ -361,11 +396,15 @@ def check_paper_order(order, trading_coins):
             limit_maker['updateTime'] = 1000*time.time()            
             elapsed = (order['transactionTime'] - limit_maker['updateTime'])/(60*1000)
             print(f"OCO LIMIT filled: {order['symbol']}, elapsed: {elapsed}")
-            profit = (float(limit_maker['price']) - float(trading_coins[coin]['buy_price']))/float(trading_coins[coin]['buy_price'])
+            profit = 100*(float(limit_maker['price']) - float(trading_coins[coin]['rec_price']))/float(trading_coins[coin]['rec_price'])
             trading_coins[coin]['profit'] = profit
             trading_coins[coin]['g_profit'] = 0.01*profit*trading_coins[coin]['am_btc']
             order_status = limit_maker['status']
         if order_status == 'FILLED':
+            trading_coins[coin]['min_price'] = lowest_price
+            since_place_buy_span = df_ohlc['timestamp'] > trading_coins[coin]['start_signal']*1000
+            time_at_min = df_ohlc['timestamp'][since_place_buy_span][df_ohlc['low'][since_place_buy_span] == lowest_price].iloc[0]
+            trading_coins[coin]['time_to_min'] = (time_at_min - trading_coins[coin]['start_signal']*1000)/(1000*60)
             save_filled_oco(trading_coins[coin], profit)
             del trading_coins[coin]
         order['status'] = order_status
@@ -498,7 +537,7 @@ def check_oco_order(order, trading_coins, coin, time_limit = 10, trade_type='REA
         if limit_filled :
             now = datetime.now().strftime("%d/%m/%y %H:%M:%S")
             print("OCO LIMIT filled: %s, place time: %s, execute time: %s" % (coin, trading_coins[coin]['buy_time'], now) )
-            profit = 100*(float(limit_maker['price']) - float(trading_coins[coin]['buy_price']))/float(trading_coins[coin]['buy_price'])
+            profit = 100*(float(limit_maker['price']) - float(trading_coins[coin]['rec_price']))/float(trading_coins[coin]['rec_price'])
             trading_coins[coin]['profit'] = profit
             trading_coins[coin]['g_profit'] = 0.01*profit*trading_coins[coin]['am_btc']
             try:
@@ -512,7 +551,7 @@ def check_oco_order(order, trading_coins, coin, time_limit = 10, trade_type='REA
         if loss_filled:
             now = datetime.now().strftime("%d/%m/%y %H:%M:%S")
             print("OCO STOP LOSS filled: %s, place time: %s, execute time: %s" % (coin, trading_coins[coin]['buy_time'], now) )
-            profit = 100*(float(stop_loss_order['price']) - float(trading_coins[coin]['buy_price']))/float(trading_coins[coin]['buy_price'])
+            profit = 100*(float(stop_loss_order['price']) - float(trading_coins[coin]['rec_price']))/float(trading_coins[coin]['rec_price'])
             trading_coins[coin]['profit'] = profit
             trading_coins[coin]['g_profit'] = 0.01*profit*trading_coins[coin]['am_btc']
             try:

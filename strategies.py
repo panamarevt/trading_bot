@@ -289,12 +289,15 @@ class C1M:
                                         except Exception as e:
                                             print("Didn't manage to check order status", e)
                                 
-                                self.trading_coins[coin] = {'coin':coin, 'start_signal':start_signal, 'buy_price':buy_price, \
-                                          'rec_price':rec_price, 'buy_time':current_time, 'status':status, 'counter':counter, \
+#                                self.trading_coins[coin] = {'coin':coin, 'start_signal':start_signal, 'buy_price':buy_price, \
+#                                          'rec_price':rec_price, 'buy_time':current_time, 'status':status, 'counter':counter, \
+#                                          'vol_1hr':vol_1hr, 'pattern':pattern, 'origin':origin,\
+#                                          'ranging':ranging.iloc[-1], 'fastk15': fastk.iloc[-1], 'min_price':min_price, 'order':order, 'am_btc': am_btc,'n_oco':0 }
+#     
+                                self.trading_coins[coin] = {'buy_time':current_time, 'coin':coin, 'buy_price':buy_price, \
+                                          'rec_price':rec_price,  'status':status, 'counter':counter, 'start_signal':start_signal,\
                                           'vol_1hr':vol_1hr, 'pattern':pattern, 'origin':origin,\
                                           'ranging':ranging.iloc[-1], 'fastk15': fastk.iloc[-1], 'min_price':min_price, 'order':order, 'am_btc': am_btc,'n_oco':0 }
-     
-        
     
     def c1m_flow(self, active_update_interval = 600, promise_update_interval = 300, 
                  TRADE_TYPE='PAPER', BUY_METHOD='LIMIT', MAX_TRADES=4, DEPOSIT_FRACTION=0.1):
