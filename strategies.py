@@ -71,7 +71,11 @@ class C1M:
         TODO: Merge with refresh active!
         '''
         #global active
-        tmp = binance_endpoints.get_ticker(symb)
+        try:
+            tmp = binance_endpoints.get_ticker(symb)
+        except Exception as e:
+            print(f"Warning! Didn't get tickers for {symb}!", e)
+            return 0
         price = np.float64(tmp['lastPrice'])
         volume = np.float64(tmp['quoteVolume'])
         
@@ -84,6 +88,7 @@ class C1M:
         Return list of active pairs as a pandas.DataFrame with 3 columns: symbol, price, 24h volume
         '''
         active = []
+        
         symbols = binance_endpoints.get_symbols_BTC()
         
         for symbol in symbols:
@@ -113,7 +118,11 @@ class C1M:
         #count = 0
         for symbol in active_list["symbol"]:
             
-            candles_df = binance_endpoints.GetKlines(symbol, interval='15m')
+            try:
+                candles_df = binance_endpoints.GetKlines(symbol, interval='15m')
+            except Exception as e:
+                print(f"Warning! Didn't get klines for {symbol}!", e)
+                continue
             #Create a dataframe with time and open, high, low, close (ohlc) values only
             ohlc = candles_df.loc[:, ['timestamp', 'open', 'high', 'low', 'close']]
             
@@ -172,10 +181,15 @@ class C1M:
             # Check if coin was bought in previous step of the loop
             if coin in list(self.trading_coins):
                 if 'orderId' in self.trading_coins[coin]['order'].keys():
-                    binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
+                    try:
+                        binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
+                    except:
+                        print("Warning: didn't check BUY order!")
                 else:
-                    binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
-            
+                    try:
+                        binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
+                    except:
+                        print("Warning: didn't check OCO order!")
             # Check if coin signalled   in previous step of the loop                              
             if coin in self.triggered.keys():
                 #status = check_profit(triggered[coin]['coin'], close.iloc[-1], triggered[coin]['start_signal'], triggered[coin]['buy_price'], triggered[coin]['buy_time'] )
@@ -205,7 +219,11 @@ class C1M:
                     stochRSI_signal = indicators.check_stochRSI_signal(fastk, slowd, kmin=10, kmax=30)
                     #Condition that distance from buy price to mid(up) bollinder band is greater than 1.5% 
                     if stochRSI_signal:    
-                        buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
+                        try:
+                            buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
+                        except Exception as e:
+                            print("Warning! Didn't get buy price!", e)
+                            continue
                         if lower_BB_signal:
                             dist_to_BB = 100*(middle.iloc[-1] - buy_price)/buy_price
                             price_to_range = (buy_price - lower.iloc[-1])/(middle.iloc[-1] - lower.iloc[-1])
@@ -238,9 +256,13 @@ class C1M:
                                
                         else:
                             #buy_price = close.iloc[-1]
-                            buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
-                            min_price = buy_price
-                            rec_price = binance_endpoints.get_rec_price(symbol,buy_price)
+                            try:
+                                buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
+                                min_price = buy_price
+                                rec_price = binance_endpoints.get_rec_price(symbol,buy_price)
+                            except Exception as e:
+                                print("Warning! Didn't get buy price and rec price!", e)
+                                continue
                             print(current_time, f"BUY signal! {coin} at {buy_price:.8f}; rec: {rec_price:.8f} Stoch RSI: ", fastk.iloc[-1], slowd.iloc[-1])
                             start_signal = time.time()
                             #save signaling coins to file:
@@ -357,8 +379,12 @@ class C1M:
             # Update active list every 10 minutes
             if last_active_uptade > active_update_interval:
                 #active_list = try_func(refresh_active)
-                active_list = self.refresh_active()
+                try:
+                    active_list = self.refresh_active()
+                except Exception as e:
+                    print("Warning! Active list wasn't updated!", e)
                 #args = (active_list,)
+                
                 promising = self.get_promising(active_list)
                 #promising = try_func(get_promising, 10, 3600, *args)
     

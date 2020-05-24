@@ -18,6 +18,7 @@ def try_func(func, step=10, duration=3600, *args, **kwargs):
     Note. We don't use conditions for the 'Connection Abort' exception because 
     there are many exceptions related to connection issues.
     '''
+    resp = []
     try:
         resp = func(*args, **kwargs)
     except Exception as e:
@@ -53,6 +54,7 @@ if __name__=='__main__':
     
     # Use try_func here to avoid some connection issues:
     # TODO! Better to add try and except EACH TIME we connect to an exchange!
-    try_func(c1m.c1m_flow, step=10, duration=3600, MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
+    while True:        
+        try_func(c1m.c1m_flow, step=10, duration=3600, MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
 
 
