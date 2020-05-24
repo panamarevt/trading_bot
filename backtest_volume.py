@@ -5,17 +5,21 @@ Created on Sun Mar 22 03:15:17 2020
 @author: Taras
 """
 
-import numpy as np
+#import numpy as np
 import pandas as pd
 
 import os
 
-from alert_new import get_symbols_BTC, is_hammer, is_doji, candle_pattern, candle_params
-from evaluate import plot_it
+#from alert_new import get_symbols_BTC, is_hammer, is_doji, candle_pattern, candle_params
+#from evaluate import plot_it
+import indicators
+from binance_endpoints import get_symbols_BTC
 
 symbols = get_symbols_BTC()
 
 #prefix = '_5MinuteBars.csv'
+#path = 'Crypto_1MinuteBars/Jan2019-April2020/'
+path = 'Crypto_1MinuteBars/'
 prefix = '_1MinuteBars.csv'
 
 
@@ -23,14 +27,15 @@ MIN_PRICE = 0.00000200 # 200 Satoshi
 MAX_PRICE = 0.009
 
 # Define start date.
-start_date = pd.Timestamp('2020-01-01')
+start_date = pd.Timestamp('2020-05-21')
 #start_date = pd.Timestamp('2019-11-20') 
+end_date = pd.Timestamp('2021-12-31')
 
 start_date = start_date - pd.Timedelta('1 day')
 #end_date
 
 STOP_LOSS = 0.05
-N_RED = 2
+N_RED = 1
 
 
 MINS_BEFORE = 15
@@ -42,7 +47,7 @@ QUOTE_AV_MIN = 3
 for symbol in symbols:
     
     print("Working on %s" % symbol)
-    fname = symbol + prefix
+    fname = path+'/'+symbol + prefix
     
     #m_15 = 3
     #h_1 = m_15*4
@@ -56,7 +61,7 @@ for symbol in symbols:
     # Put start date 1 day earlier to make  technical indicators work from the beginning of the analysis.
     #start_date = start_date - pd.Timedelta('1 day')
     
-    df_ohlc = df_ohlc[df_ohlc.index >= start_date]
+    df_ohlc = df_ohlc[(df_ohlc.index >= start_date) & (df_ohlc.index <= end_date) ]
     
     if len(df_ohlc) == 0: continue
     
@@ -75,25 +80,31 @@ for symbol in symbols:
     #df_ohlc = df_tmp[['open', 'high', 'low', 'close', 'quote_av', 'volume']] #    
     
     count = 0
+    i = MINS_BEFORE
     
-    
-    for i in range(MINS_BEFORE, len(df_ohlc['open'])) :
+    #for i in range(MINS_BEFORE, len(df_ohlc['open'])) :
+    while i < len(df_ohlc['open']) :
         vol_prev_1hr = df_ohlc['volume'].iloc[i-MINS_BEFORE : i].sum()
         vol_24h = df_ohlc['quote_av'].iloc[i-1440 : i].sum()
-        candle_color = candle_params(df_ohlc['open'].iloc[i], df_ohlc['high'].iloc[i],df_ohlc['low'].iloc[i],df_ohlc['close'].iloc[i])[-1]
+        #candle_color = indicators.candle_params(df_ohlc['open'].iloc[i], df_ohlc['high'].iloc[i],df_ohlc['low'].iloc[i],df_ohlc['close'].iloc[i])[-1]
+        last_candle = indicators.Candle(df_ohlc['open'].iloc[i], df_ohlc['high'].iloc[i],df_ohlc['low'].iloc[i],df_ohlc['close'].iloc[i])
         vol_curr = df_ohlc['volume'].iloc[i]
         q_vol = df_ohlc['quote_av'].iloc[i]
         price_change = 100*(df_ohlc['close'].iloc[i] - df_ohlc['close'].iloc[i-1])/df_ohlc['close'].iloc[i-1]
         trades = df_ohlc['trades'].iloc[i]
+        taker_buy = df_ohlc['tb_quote_av'].iloc[i]
         
         # Conditions:
         vol_cond = (vol_curr > vol_prev_1hr)
         quote_col_cond = (q_vol > QUOTE_AV_MIN)
-        green_candle = (candle_color == 'green')
+        green_candle = (last_candle.green)
         price_cond = (price_change > 2)
-        min_price_cond = (df_ohlc['close'].iloc[i] > MIN_PRICE)                
+        min_price_cond = (df_ohlc['close'].iloc[i] > MIN_PRICE)
+        shadow_to_body = last_candle.high_shadow/last_candle.body
+        # Experimental feature. For now not to use it, but record the value of shadow_to_body
+        shadow_cond = shadow_to_body < 0.334                
         
-        if vol_cond  and quote_col_cond and price_cond and green_candle and min_price_cond:
+        if vol_cond  and quote_col_cond and price_cond and green_candle and min_price_cond : # and shadow_cond:
             try :
                 tmp = df_ohlc['open'].iloc[i+1]
             except IndexError:
@@ -106,8 +117,9 @@ for symbol in symbols:
             red_count = 0
 #            while candle_color == 'green':
             while red_count < N_RED:                
-                candle_color = candle_params(df_ohlc['open'].iloc[j], df_ohlc['high'].iloc[j],df_ohlc['low'].iloc[j],df_ohlc['close'].iloc[j])[-1]
-                if candle_color == 'red':
+                #candle_color = candle_params(df_ohlc['open'].iloc[j], df_ohlc['high'].iloc[j],df_ohlc['low'].iloc[j],df_ohlc['close'].iloc[j])[-1]
+                last_candle = indicators.Candle(df_ohlc['open'].iloc[j], df_ohlc['high'].iloc[j],df_ohlc['low'].iloc[j],df_ohlc['close'].iloc[j])
+                if last_candle.red:
                     sell_price = df_ohlc['close'].iloc[j]
                     red_count += 1
                     profit = 100*(sell_price - buy_price)/buy_price
@@ -115,7 +127,8 @@ for symbol in symbols:
                         sell_time = df_ohlc.index[j]
                         break                        
                 sell_time = df_ohlc.index[j]
-                j += 1                           
+                j += 1
+                                      
                         
             
                         
@@ -131,14 +144,20 @@ for symbol in symbols:
             count += 1
             #plot_it(df_ohlc, buy_time, sell_time, buy_price, sell_price, interval='1min', savefile="%s_%d" % (symbol, count) )
             
-            filename = "backtest_volume_strategy_1min_2red.dat"
+            filename = "backtest_volume_1min_shadow_from20May.dat"
             
             #empty = os.path.getsize(filename) == 0
             with open(filename, 'a') as f:
                 empty = os.path.getsize(filename) == 0
                 if empty:
-                    f.write("buy_time, symbol, buy_price, profit, elapsed, went_down, vol_prev_1hr, vol_curr, q_vol, price_change,trades,vol_24h\n")
-                f.write(f"{buy_time},{symbol},{buy_price:.8f},{profit:.2f},{elapsed:.1f},{went_down:.2f},{vol_prev_1hr:.1f},{vol_curr:.1f},{q_vol:.1f},{price_change:.1f},{trades},{vol_24h:.1f}\n")
+                    f.write("buy_time, symbol, buy_price, profit, elapsed, went_down, vol_prev_1hr, vol_curr, q_vol, tb_quote_av, price_change,trades,vol_24h,last_shadow\n")
+                f.write(f"{buy_time},{symbol},{buy_price:.8f},{profit:.2f},{elapsed:.1f},{went_down:.2f},{vol_prev_1hr:.1f},{vol_curr:.1f},{q_vol:.1f},{taker_buy:.2f},{price_change:.1f},{trades},{vol_24h:.1f},{shadow_to_body:.3f}\n")
+            
+            # After making a trade continue from the time we have sold the coin:
+            i = j
+        # Increase i to advance the while loop:
+        i += 1
+#
                 #f.write("%s,%s,%.8f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%.2f,%d,%.2f\n" % (buy_time, symbol, buy_price, profit, elapsed, went_down, vol_prev_1hr, vol_curr, q_vol, price_change,trades,vol_24h) )
 #    
 

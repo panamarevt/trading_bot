@@ -70,11 +70,11 @@ STOP_LOSS = 0.05
 # Number of red candles to sell after. Backtests show that it is better to sell after the first red candle
 N_RED = 1
 # Interval in minutes to campare with the current volume.
-MINS_BEFORE = 10
+MINS_BEFORE = 15
 # Minimum volume in BTC for current 1 minute candle
 QUOTE_AV_MIN = 3
 # Price change criterion for the current candle
-PRICE_CHANGE_PC = 1
+PRICE_CHANGE_PC = 2
 
 # List of BTC quantities (only for testing reasons)
 AMOUNTS = [0.05, 0.1, 0.2, 1]
@@ -204,7 +204,9 @@ def volume_strategy(symbol):
         price_last = candles_df['close'].iloc[-2]
     
     # Price conditions:
-    price_change = 100*(price_curr - price_last)/price_last        
+    #price_change = 100*(price_curr - price_last)/price_last
+    # Don't take into account the current price to make it more comparable with backtest
+    price_change = 100*(candles_df['close'].iloc[-2] - candles_df['close'].iloc[-3])/candles_df['close'].iloc[-3]     
     price_cond = (price_change > PRICE_CHANGE_PC) 
    
     if (vol_cond or vol_cond_last) and (quote_col_cond or quote_col_cond_last) :
@@ -213,9 +215,13 @@ def volume_strategy(symbol):
     if price_cond:
         #logger.info(f"Price condition! {symbol}:{vol_cond}:{vol_cond_last}:{vol_curr}:{vol_prev}:{price_change:.1f}:{q_vol:.2f}")
         print(f"Price condition! {symbol}:{vol_cond}:{vol_cond_last}:{vol_curr}:{vol_prev}:{price_change:.1f}:{q_vol:.2f}")
-    if (vol_cond and quote_col_cond and price_cond and min_price_cond) or \
-            (vol_cond_last and quote_col_cond_last and price_cond and min_price_cond):
         
+#    if (vol_cond and quote_col_cond and price_cond and min_price_cond) or \
+#            (vol_cond_last and quote_col_cond_last and price_cond and min_price_cond):
+
+    # Use only condition for the finished candles! (This should give better performance as compared to the backtest)
+    if (vol_cond_last and quote_col_cond_last and price_cond and min_price_cond):    
+    
         buy_time = time.time()
         book = client.get_order_book(symbol=symbol, limit=1000)
         buy_price = book['asks'][0][0]
