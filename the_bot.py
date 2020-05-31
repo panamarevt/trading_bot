@@ -46,15 +46,24 @@ def try_func(func, step=10, duration=3600, *args, **kwargs):
     return resp
 
 if __name__=='__main__':
-# Initialize C1M class instance:
-    c1m = strategies.C1M()
+    # Template to use C1M strategy (comment out):
     
-    # Start the strategy:
-    #c1m.c1m_flow(MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
+    # Initialize C1M class instance:
+    #c1m = strategies.C1M()
+    
+    ## Start the strategy:
+    ##c1m.c1m_flow(MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
     
     # Use try_func here to avoid some connection issues:
     # TODO! Better to add try and except EACH TIME we connect to an exchange!
-    while True:        
-        try_func(c1m.c1m_flow, step=10, duration=3600, MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
+#    while True:        
+#        try_func(c1m.c1m_flow, step=10, duration=3600, MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
+    
+    # --------------------------------------------------------
+    # Template to use Volume strategy:
+    volume = strategies.Volume()
+    
+    volume.volume_flow(n_jobs=8)
+    
 
 
