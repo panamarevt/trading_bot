@@ -21,6 +21,8 @@ from binance.client import Client
 
 import indicators
 
+# Define some general functions that may be used by all strategies
+
 def save_signal(t_curr, coin, price, counter, pattern):
     with open('buy_signals_pattern_new.dat', 'a') as f:
         f.write("%s   %5s    %.8f   %2d  %12s\n" % (t_curr, coin, price, counter, pattern))
@@ -448,7 +450,7 @@ class Volume:
     and if the price goes up, jump on the board :-)
     For now it is designed to work with BTC trading pairs, but can be generalazied to other pairs'''      
     def __init__(self, MIN_PRICE = 0.00000200, MAX_PRICE = 0.009, N_RED = 1, MINS_BEFORE = 15,
-                 QUOTE_AV_MIN = 3, PRICE_CHANGE_PC = 2, STOP_LOSS = 0.05):
+                 QUOTE_AV_MIN = 3, PRICE_CHANGE_PC = 2, STOP_LOSS = -0.04):
         # Initialize main parameters of the strategy
         # Minimum and maximum price
         self.MIN_PRICE = MIN_PRICE # 200 Satoshi
@@ -539,23 +541,56 @@ class Volume:
         #            (vol_cond_last and quote_col_cond_last and price_cond and min_price_cond):
         
             # Use only condition for the finished candles! (This should give better performance as compared to the backtest)
-            if (vol_cond_last and quote_col_cond_last and price_cond and min_price_cond):    
+            #if ( vol_cond_last and price_cond and quote_col_cond_last and min_price_cond):  
+            if ( (vol_cond_last or price_cond) and quote_col_cond_last and min_price_cond):    
             
                 buy_time = time.time()
-                book = client.get_order_book(symbol=symbol, limit=1000)
-                buy_price = book['asks'][0][0]
-                #buy_price = binance_endpoints.get_buy_amount(symbol, "MARKET")
-                qties = [am/float(buy_price) for am in self.AMOUNTS]
-                deals = [weighted_avg_orderBook(book['asks'], qty) for qty in qties]
-                #logger.info(f"Buy {symbol} for {buy_price}!")
-                print(f"Buy {symbol} for {buy_price}!")
+                
                 if vol_cond_last and (not vol_cond) :
                     vol_curr = vol_curr_last
                     trades = trades_last
                     q_vol = q_vol_last
-                self.in_trade[symbol] = {'symbol':symbol, 'buy_time':buy_time, 'vol_curr':vol_curr, 'q_vol':q_vol, 'price_change':price_change,'trades':trades,
-                        'quantities':qties, 'buy_deals':deals}
-    
+                    
+                if self.TRADE_TYPE == 'PAPER':
+                    book = client.get_order_book(symbol=symbol, limit=1000)
+                    buy_price = book['asks'][0][0]
+                    #buy_price = binance_endpoints.get_buy_amount(symbol, "MARKET")
+                    qties = [am/float(buy_price) for am in self.AMOUNTS]
+                    deals = [weighted_avg_orderBook(book['asks'], qty) for qty in qties]
+                    #logger.info(f"Buy {symbol} for {buy_price}!")
+                    print(f"Buy {symbol} for {buy_price}!")
+                    self.in_trade[symbol] = {'symbol':symbol, 'buy_time':buy_time, 'vol_curr':vol_curr, 'q_vol':q_vol, 'price_change':price_change,'trades':trades,
+                        'quantities':qties, 'buy_deals':deals}                    
+                
+                elif self.TRADE_TYPE == 'REAL':
+#                    try:
+#                        buy_price = binance_endpoints.get_buy_price(symbol, self.BUY_METHOD)
+#                    except Exception as e:
+#                        print(f"Warning! Didn't get buy price for {symbol}!", e)
+                    
+                    # Check if the max number of trading coins has been reached in the previuos step
+                    if len(self.in_trade) == self.MAX_TRADES:
+                        return 0
+                    try:
+                        order, _ = binance_endpoints.place_buy_order(symbol, self.MAX_TRADES, len(self.in_trade), 
+                                                          self.BUY_METHOD, self.DEPOSIT_FRACTION,
+                                                          trade_type=self.TRADE_TYPE, buy_below=0)
+                        buy_price = order['price']
+                        print(f"Buy {symbol} for {buy_price}! Buy order placed!")
+                        self.in_trade[symbol] = {'buy_time':buy_time, 'symbol':symbol, 'vol_curr':vol_curr, 'q_vol':q_vol, 'price_change':price_change,'trades':trades,
+                        'order':order, 'buy':buy_price}
+                        # Check if the order has been already filled
+                        if self.BUY_METHOD != "MARKET":
+                            print("Check BUY order ...")
+                            status = binance_endpoints.check_buy_order(order, self.in_trade, symbol, BUY_TIME_LIMIT = 1, strategy = 'Volume')                          
+                            print(f"Order status: {status}")
+                        
+                    except Exception as e:
+                        print(f"Warning! Didn't place buy order for {symbol}!", e)
+                        print("Skip the symbol...")
+                        return 0
+ 
+
 
       
     def evaluate(self, symbol):
@@ -570,38 +605,90 @@ class Volume:
         op, hi, lo, cl = candles_df['open'].iloc[-2], candles_df['high'].iloc[-2],candles_df['low'].iloc[-2],candles_df['close'].iloc[-2]
         last_candle_color = indicators.candle_params(op, hi, lo, cl)[-1]
         print(last_candle_color)
+        
+        # Measure elapsed time: 
         time_now = time.time()
         elapsed = time_now - self.in_trade[symbol]['buy_time']
+        
+        # Check for STOP_LOSS:
+        if self.TRADE_TYPE=='REAL':
+            last_price = candles_df['close'].iloc[-1]
+            profit = (last_price - float(self.in_trade[symbol]['buy']) )/float(self.in_trade[symbol]['buy'])
+            if profit < self.STOP_LOSS:
+                self.sell_and_save(symbol, elapsed)
+                print(f"STOP LOSS occured!, profit = {profit:.2f}")
+                print("Remove coin from trading list!")
+                del self.in_trade[symbol]
+                return 0
+        
+        # Main evaluation of the strategy:    
         if (last_candle_color == 'red') and (elapsed > 60): # Here elapsed time is measured in seconds
             # We wait at least 1 minute before we can sell. Maybe it is better to sell imediately if the candle where we bought closes red? 
             # We can use 'close_time' of the buy candle to check whether that candle has been closed or not.
             # Another idea for this strategy: don't wait until candle closes red, check only the sell volume.
-            book = client.get_order_book(symbol=symbol)
-            sell_deals = [ weighted_avg_orderBook(book['bids'], qty) for qty in self.in_trade[symbol]['quantities'] ]                
-            self.in_trade[symbol]['sell_deals'] = sell_deals
-            self.in_trade[symbol]['elapsed'] = elapsed/60
-            self.in_trade[symbol]['profits'] = [100*(sell - buy)/buy for sell, buy in zip(self.in_trade[symbol]['sell_deals'], self.in_trade[symbol]['buy_deals'] )]
-            ##logger.info(f"Sell {symbol} for {sell_deals[0]:.8f}! Profit: {in_trade[symbol]['profits'][0]:.2f}")
-            print(f"Sell {symbol} for {sell_deals[0]:.8f}! Profit: {self.in_trade[symbol]['profits'][0]:.2f}")
-            self.save_trade(symbol)
+            if self.TRADE_TYPE=='PAPER':
+                book = client.get_order_book(symbol=symbol)
+                sell_deals = [ weighted_avg_orderBook(book['bids'], qty) for qty in self.in_trade[symbol]['quantities'] ]                
+                self.in_trade[symbol]['sell_deals'] = sell_deals
+                self.in_trade[symbol]['elapsed'] = elapsed/60
+                self.in_trade[symbol]['profits'] = [100*(sell - buy)/buy for sell, buy in zip(self.in_trade[symbol]['sell_deals'], self.in_trade[symbol]['buy_deals'] )]
+                ##logger.info(f"Sell {symbol} for {sell_deals[0]:.8f}! Profit: {in_trade[symbol]['profits'][0]:.2f}")
+                print(f"Sell {symbol} for {sell_deals[0]:.8f}! Profit: {self.in_trade[symbol]['profits'][0]:.2f}")
+                self.save_trade(symbol)
+            elif self.TRADE_TYPE=='REAL':
+                self.sell_and_save(symbol, elapsed)
+            print("remove coin from trading list after evaluation")
             del self.in_trade[symbol]
 
+    def sell_and_save(self, symbol, elapsed):
+        '''Call to sell_leftovers for the symbol and save trade statistics'''
+        sell_status = binance_endpoints.sell_leftovers(symbol) # Here sell everything of the symbol! Assume that we don't hold any assets except BTC.
+        fills = sell_status['fills']
+        Qty = sell_status['executedQty']
+        # Calculate weigted average sell price:
+        sell_price = binance_endpoints.weighted_avg(fills, symbol)
+        self.in_trade[symbol]['sell_price'] = sell_price
+        print(f"Sell {symbol} for {sell_price} ")
+        self.in_trade[symbol]['elapsed'] = f'{elapsed/60:.2f}'
+        self.in_trade[symbol]['executedQty'] = Qty
+        self.save_trade(symbol)
 
     def save_trade(self, symbol):
-        fname = 'trades_volume_strategy_demo3_1-10.dat'
+        '''Save trade statistics to a file from the trade dictionary 'in_trade' '''
+        #fname = 'trades_volume_strategy_demo3_1-10.dat'
+        fname = 'trades_volume_strategy_demo_real_1.dat'
         print(f"Saving trade info for {symbol} ...")
+        
         with open(fname, 'a') as f:
             empty = os.path.getsize(fname) == 0
-            if empty:
-                f.write("buy_time, symbol, buy1, buy2, buy3, buy4, qty1, qty2, qty3, qty4, sell1, sell2, sell3, sell4, profit1, profit2, profit3, profit4, elapsed, vol_curr, q_vol, price_change, trades\n")
-            buy_time = pd.to_datetime(self.in_trade[symbol]['buy_time'], unit='s')
-            buy1,buy2,buy3,buy4 = self.in_trade[symbol]['buy_deals']
-            qty1,qty2,qty3,qty4 = self.in_trade[symbol]['quantities']        
-            sell1,sell2,sell3,sell4 = self.in_trade[symbol]['sell_deals']
-            p1,p2,p3,p4 = self.in_trade[symbol]['profits']
-            f.write(f"{buy_time:%Y-%m-%d %H:%M:%S},{symbol},{buy1:.8f},{buy2:.8f},{buy3:.8f},{buy4:.8f},{qty1:.2f},{qty2:.2f},{qty3:.2f},{qty4:.2f},{sell1:.8f},{sell2:.8f},{sell3:.8f},{sell3:.8f},{p1:.2f},{p2:.2f},{p3:.2f},{p4:.2f},{self.in_trade[symbol]['elapsed']:.1f},{self.in_trade[symbol]['vol_curr']:.1f},{self.in_trade[symbol]['q_vol']:.2f},{self.in_trade[symbol]['price_change']:.1f},{self.in_trade[symbol]['trades']}\n")
-            
-    
+            if self.TRADE_TYPE == 'PAPER':
+                if empty:
+                    f.write("buy_time, symbol, buy1, buy2, buy3, buy4, qty1, qty2, qty3, qty4, sell1, sell2, sell3, sell4, profit1, profit2, profit3, profit4, elapsed, vol_curr, q_vol, price_change, trades\n")
+                buy_time = pd.to_datetime(self.in_trade[symbol]['buy_time'], unit='s')
+                buy1,buy2,buy3,buy4 = self.in_trade[symbol]['buy_deals']
+                qty1,qty2,qty3,qty4 = self.in_trade[symbol]['quantities']        
+                sell1,sell2,sell3,sell4 = self.in_trade[symbol]['sell_deals']
+                p1,p2,p3,p4 = self.in_trade[symbol]['profits']
+                f.write(f"{buy_time:%Y-%m-%d %H:%M:%S},{symbol},{buy1:.8f},{buy2:.8f},{buy3:.8f},{buy4:.8f},{qty1:.2f},{qty2:.2f},{qty3:.2f},{qty4:.2f},{sell1:.8f},{sell2:.8f},{sell3:.8f},{sell3:.8f},{p1:.2f},{p2:.2f},{p3:.2f},{p4:.2f},{self.in_trade[symbol]['elapsed']:.1f},{self.in_trade[symbol]['vol_curr']:.1f},{self.in_trade[symbol]['q_vol']:.2f},{self.in_trade[symbol]['price_change']:.1f},{self.in_trade[symbol]['trades']}\n")
+            elif  self.TRADE_TYPE == 'REAL':
+                profit = 100*( float(self.in_trade[symbol]['sell_price']) - float(self.in_trade[symbol]['buy']) )/float(self.in_trade[symbol]['buy'])
+                # Below we format the values for proper output                
+                buy_time = pd.to_datetime(self.in_trade[symbol]['buy_time'], unit='s')
+                self.in_trade[symbol]['buy_time'] = f"{buy_time:%Y-%m-%d %H:%M:%S}"
+                #self.in_trade[symbol]['buy_time'] = f"{pd.to_datetime(self.in_trade[symbol]['buy_time'], unit='s'):%Y-%m-%d %H:%M:%S}"
+                self.in_trade[symbol]['vol_curr'] = f"{self.in_trade[symbol]['vol_curr']:.1f}"
+                self.in_trade[symbol]['q_vol'] = f"{self.in_trade[symbol]['q_vol']:.2f}"
+                self.in_trade[symbol]['price_change'] = f"{self.in_trade[symbol]['price_change']:.2f}"
+                self.in_trade[symbol]['profit'] = f"{profit:.2f}"
+                if empty:
+                   for key in list(self.in_trade[symbol]):
+                       f.write(f"{key},")
+                   f.write('\n')
+                for key in list(self.in_trade[symbol]):
+                   f.write(f'{self.in_trade[symbol][key]},')
+                f.write('\n') 
+                       
+               
     @staticmethod
     def save_volumes(symbol, candles):
         '''Record real-time volume data
@@ -627,14 +714,61 @@ class Volume:
     
 
     
-    def volume_flow(self, AMOUNTS = [0.05, 0.1, 0.2, 1], n_jobs=8):
+    def volume_flow(self, AMOUNTS = [0.05, 0.1, 0.2, 1], n_jobs=8,
+                    TRADE_TYPE='PAPER', BUY_METHOD='LIMIT1', MAX_TRADES=1, DEPOSIT_FRACTION=0.01):
         '''Main flow of the strategy'''
         # Amounts in BTC for paper trading
         self.AMOUNTS = AMOUNTS
+        # Specify if we wanto to trade on paper or real:
+        self.TRADE_TYPE=TRADE_TYPE
+        # Market BUY or place limit orders:
+        self.BUY_METHOD=BUY_METHOD
+        # Max. number of simulataneous trades:
+        self.MAX_TRADES=MAX_TRADES
+        # How much of the whole deposit to use for trades:
+        self.DEPOSIT_FRACTION=DEPOSIT_FRACTION
         # Get active trading symbols:
         symbols = binance_endpoints.get_symbols_BTC()
+        
         # The infinite loop starts here:
         while True:
+            # Check if some coins are in trade:
+            if len(self.in_trade) > 0:
+                # In case of partial filling orders we have to make sure that the original order have been canceled
+                for symbol in list(self.in_trade):
+                    time_now = time.time()
+                    elapsed = time_now - self.in_trade[symbol]['buy_time']
+                    # If BUY_METHOD is NOT MARKET, make sure to check the status of BUY order:
+                    if self.BUY_METHOD != 'MARKET':
+                        # TODO! Make BUY_TIME_LIMIT a variable!:
+                        if elapsed < 120: # We take 120 seconds here just in case ( actual buy time limit is 1 minute)
+                            print(f"Check if we have some open orders for {symbol} ...")
+                            orders = binance_endpoints.get_open_orders(symbol)
+                            if len(orders) > 0: 
+                                # Important! Assume that only BUY orders can be open, SELL orders are MARKET (instant)
+                                # Check if the buy order have been filled:
+                                print("Yes, now check status of the BUY order")
+                                binance_endpoints.check_buy_order(self.in_trade[symbol]['order'], self.in_trade, symbol, BUY_TIME_LIMIT = 1, strategy = 'Volume')
+               
+    
+                ##logger.debug(f"{len(in_trade.keys())} coins are in trade")
+                print(self.in_trade.keys())
+                then = time.time()                
+                #logger.debug("Start evaluating strategy")
+                # Evaluate the trading coins:
+                for symbol in list(self.in_trade):
+                    print("Evaluating {symbol} ...")
+                    self.evaluate(symbol)
+                
+                now = time.time()
+                elpsd = now - then
+                
+                
+                if len(self.in_trade) == self.MAX_TRADES:                    
+                    print("Max number of traiding coins is reached")
+                    time.sleep(5) # Check coin status every 5 seconds to avoid API limits
+                    continue # Don't search for other signals if MAX_TRADES is reached
+                
             t1 = time.time()
             # Run in parallel the main function to search for the signal of the strategy
             run_parallel(symbols, self.search, n_threads=n_jobs)
@@ -644,19 +778,6 @@ class Volume:
             elpsd = t2 - t1
             #logger.debug(f"Checked all symbols in {elpsd} sec.")
             print(f"Checked all symbols in {elpsd} sec.")  
-            # Check if some a coin is in trade:
-            if len(self.in_trade) > 0:
-    
-                ##logger.debug(f"{len(in_trade.keys())} coins are in trade")
-                print(self.in_trade.keys())
-                then = time.time()                
-                #logger.debug("Start evaluating strategy")
-                # Evaluate the trading coins:
-                for symbol in list(self.in_trade):
-                    self.evaluate(symbol)
-                
-                now = time.time()
-                elpsd = now - then
         
         
         

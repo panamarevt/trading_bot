@@ -129,14 +129,23 @@ def save_filled_oco(coin_dict, profit):
 
 
 def get_buy_price(symbol, BUY_METHOD):
-    '''For now use very basic approach - place order at 2nd place in the order book for a limit order
-    For a market order take the first price. For market order we need price to determine the quatity of the coin we are going to buy
+    ''' Returns buy price depending on BUY METHOD.
+    BUY_METHOD = `LIMIT` - place order at 2nd place in the order book for a limit order
+    `LIMIT1` - place order at 1st place in the order book for a limit order
+    `LIMIT0` - place order on top of the order book for a limit order
+    For a market order take the first price. For market order we need price to determine the quantity of the coin we are going to buy
     '''
     order_book = client.get_order_book(symbol=symbol)
     if BUY_METHOD == 'MARKET':
         buy_price = order_book['asks'][0][0]
-    else:        
+    elif BUY_METHOD == 'LIMIT':        
         buy_price = order_book['bids'][1][0]
+    elif BUY_METHOD == 'LIMIT1':  
+        buy_price = order_book['bids'][0][0]
+    elif BUY_METHOD == 'LIMIT0':
+        step = get_price_precision(symbol) # Precision in price
+        buy_price = float(order_book['bids'][0][0]) + 1.0*10**(-1*step)
+        buy_price = f'{buy_price:.8f}' # Convert to str with 8 decimal places
     return buy_price
 
 def get_rec_price(symbol, BuyPrice, buy_below=0.5):
@@ -180,9 +189,12 @@ def weighted_avg(fills, symbol):
     
     return  avg_price
     
-       
 
 #Orders:
+
+def get_open_orders(symbol):
+    '''Returns list of all open orders for a particular symbol'''
+    return client.get_open_orders(symbol=symbol)
 
 def place_market_sell_order(symbol, qty):
     market_order = client.order_market_sell(symbol=symbol, quantity=qty)
@@ -347,6 +359,7 @@ def place_paper_oco(symbol, price, stop_price, stop_limit_price):
     return oco_order
 
 def check_order_status(order):
+    '''Returns the placed order detailes (not only the status)'''
     try:
         order_status = client.get_order(symbol=order['symbol'], orderId=order['orderId'])
     except Exception as e:
@@ -414,7 +427,7 @@ def cancel_order(order):
     result = client.cancel_order(symbol=order['symbol'], orderId=order['orderId'])
     return result
 
-def check_buy_order(order, trading_coins, coin, trade_type='REAL'):    
+def check_buy_order(order, trading_coins, coin, trade_type='REAL', BUY_TIME_LIMIT = 30, strategy='C1M' ):    
     '''order status response:
        {'symbol': 'WRXBTC',
          'orderId': 7895233,
@@ -436,7 +449,7 @@ def check_buy_order(order, trading_coins, coin, trade_type='REAL'):
          'origQuoteOrderQty': '0.00000000'}
     '''
     #!!!TODO: Improve Partial filling
-    BUY_TIME_LIMIT = 30 # To be set in the strategy class!
+    #BUY_TIME_LIMIT = 30 # To be set in the strategy class!
     try:
         if trade_type == 'REAL':
             trading_coins[coin]['order'] = check_order_status(order)
@@ -450,6 +463,17 @@ def check_buy_order(order, trading_coins, coin, trade_type='REAL'):
         place_time = trading_coins[coin]['order']['time']/1000 #Time in Binance is given in milliseconds, convert to seconds here.
     except KeyError:
         place_time = trading_coins[coin]['order']['transactionTime']/1000
+
+    if status == "FILLED":        
+        if strategy == 'C1M':
+            try:
+                trading_coins[coin]['order'] = place_oco_order(order['symbol'], order['price'], trade_type=trade_type )
+            except Exception as e:
+                print("WARNING!!!! OCO order didn't place!", e)
+        elif strategy == 'Volume':
+            print(f"Buy order for {coin} filled! Now start evaluating the order...")
+            return status
+    
     time_curr = time.time()
     elapsed_min = (time_curr - place_time)/60
     if elapsed_min > BUY_TIME_LIMIT:
@@ -458,19 +482,25 @@ def check_buy_order(order, trading_coins, coin, trade_type='REAL'):
        executedQty = float(trading_coins[coin]['order']['executedQty'])
        if executedQty > 0:
            print("Order Partially Filled", coin)
-           try:
-               sell_leftovers(trading_coins[coin]['order']['symbol'])    
-           except Exception as e:
-               print("Warning! Order partially filled, but it was not sold!", coin, executedQty)
-               print(e)
-               del trading_coins[coin]
+           if strategy == 'C1M':
+               try:
+                   sell_leftovers(trading_coins[coin]['order']['symbol'])    
+               except Exception as e:
+                   print("Warning! Order partially filled, but it was not sold!", coin, executedQty)
+                   print(e)
+                   del trading_coins[coin]
+                   return "CANCELLED"
+           elif strategy == 'Volume':
+               # For the Volume strategy we don't want to delete the coin from the trading list,
+               # but continue with the executed quantity
+               print("Perform evaluation with executed quantity...")
+               status = "PARTIALLY_FILLED"
+               return status
+               
        status = "CANCELLED"
+       print("Remove coin from trading list, order cancelled")
        del trading_coins[coin]
-    if status == "FILLED":        
-        try:
-            trading_coins[coin]['order'] = place_oco_order(order['symbol'], order['price'], trade_type=trade_type )
-        except Exception as e:
-            print("WARNING!!!! OCO order didn't place!", e)    
+    
     return status
 
         
@@ -609,6 +639,52 @@ def check_oco_order(order, trading_coins, coin, time_limit = 10, trade_type='REA
     return status
 
 def sell_leftovers(symbol):
+    '''Sell everything left from the asset
+    Full order response:
+    {"symbol": "BTCUSDT",
+    "orderId": 28,
+    "clientOrderId": "6gCrw2kRUAF9CvJDGP16IP",
+    "transactTime": 1507725176595,
+    "price": "0.00000000",
+    "origQty": "10.00000000",
+    "executedQty": "10.00000000",
+    "status": "FILLED",
+    "timeInForce": "GTC",
+    "type": "MARKET",
+    "side": "SELL",
+    "fills": [
+        {
+            "price": "4000.00000000",
+            "qty": "1.00000000",
+            "commission": "4.00000000",
+            "commissionAsset": "USDT"
+        },
+        {
+            "price": "3999.00000000",
+            "qty": "5.00000000",
+            "commission": "19.99500000",
+            "commissionAsset": "USDT"
+        },
+        {
+            "price": "3998.00000000",
+            "qty": "2.00000000",
+            "commission": "7.99600000",
+            "commissionAsset": "USDT"
+        },
+        {
+            "price": "3997.00000000",
+            "qty": "1.00000000",
+            "commission": "3.99700000",
+            "commissionAsset": "USDT"
+        },
+        {
+            "price": "3995.00000000",
+            "qty": "1.00000000",
+            "commission": "3.99500000",
+            "commissionAsset": "USDT"
+        }
+    ]  }'''
+    market_sell = None
     coin = symbol[:-3] 
     info = client.get_symbol_info(symbol)
     stepSize = float(info['filters'][2]['stepSize'])
@@ -620,16 +696,18 @@ def sell_leftovers(symbol):
         qty = float(truncate(qty, prec))
         try:
             print("Place market sell order", symbol, qty)
-            place_market_sell_order(symbol, qty)
+            market_sell = place_market_sell_order(symbol, qty)
             
             #del trading_coins[coin]
         except Exception as e:
             print("Warning! Market sell didn't execute!" , e, symbol )
+    
+    return market_sell        
         
     
 
 def get_lot_precision(symbol):
-    '''return precision of the lot for the order
+    '''return precision of the lot for the order (number of decimal places)
     algorithm: take step size from the exchange, then split it by '.', after that find '1' in the part after '.'
     It returns the position of digit 1 after '.'. If it is not found then it returns -1.
     When we add 1 to the result it also handles the case when the digit 1 is not there (zero precision)
@@ -640,7 +718,7 @@ def get_lot_precision(symbol):
     return prec
 
 def get_price_precision(symbol):
-    '''return precision of the price for the order
+    '''return precision of the price for the order (number of decimal places)
     algorithm: take step size from the exchange, then split it by '.', after that find '1' in the part after '.'
     It returns the position of digit 1 after '.'. If it is not found then it returns -1.
     When we add 1 to the result it also handles the case when the digit 1 is not there (zero precision)

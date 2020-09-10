@@ -61,9 +61,9 @@ if __name__=='__main__':
     
     # --------------------------------------------------------
     # Template to use Volume strategy:
-    volume = strategies.Volume()
+    volume = strategies.Volume(STOP_LOSS = -0.03)
     
-    volume.volume_flow(n_jobs=8)
+    volume.volume_flow(n_jobs=6, TRADE_TYPE='REAL', DEPOSIT_FRACTION=0.055)
     
 
 
