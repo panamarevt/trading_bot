@@ -308,7 +308,8 @@ class C1M:
                             except Exception as e:
                                 print("Warning! Didn't get buy price and rec price!", e)
                                 continue
-                            print(current_time, f"BUY signal! {coin} at {buy_price:.8f}; rec: {rec_price:.8f} Stoch RSI: ", fastk.iloc[-1], slowd.iloc[-1])
+                            print(current_time, f"BUY signal! {coin} at {buy_price:.8f}; rec: {rec_price:.8f} Stoch RSI: ", 
+                                  fastk.iloc[-1], slowd.iloc[-1])
                             start_signal = time.time()
                             #save signaling coins to file:
                             counter = 0
@@ -333,7 +334,9 @@ class C1M:
                                 print("Placing Buy Order")
                                     
                                 try:
-                                    order, am_btc = binance_endpoints.place_buy_order(symbol,self.MAX_TRADES,n_trades,self.BUY_METHOD,self.DEPOSIT_FRACTION, trade_type=self.TRADE_TYPE)
+                                    order, am_btc = binance_endpoints.place_buy_order(symbol,self.MAX_TRADES,n_trades,
+                                                                                      self.BUY_METHOD,self.DEPOSIT_FRACTION, 
+                                                                                      trade_type=self.TRADE_TYPE)
                                 except Exception as e:
                                     print("Exception during pacing BUY order occured", e)
                                     continue                             
@@ -342,7 +345,8 @@ class C1M:
                                     buy_price = order['price']
                                     print("Placing OCO order", symbol)
                                     try:                                    
-                                        order = binance_endpoints.place_oco_order(symbol, buy_price, take_profit=0.017, stop_loss = 0.02)
+                                        order = binance_endpoints.place_oco_order(symbol, buy_price, 
+                                                                                  take_profit=self.TAKE_PROFIT, stop_loss =self.STOP_LOSS)
                                     except Exception as e:
                                         print("Exception during placing OCO order:", symbol, buy_price)
                                         print(e)
@@ -367,14 +371,17 @@ class C1M:
                                           'ranging':ranging.iloc[-1], 'fastk15': fastk.iloc[-1], 'min_price':min_price, 'order':order, 'am_btc': am_btc,'n_oco':0 }
     
     def c1m_flow(self, active_update_interval = 600, promise_update_interval = 300, 
-                 TRADE_TYPE='PAPER', BUY_METHOD='LIMIT', MAX_TRADES=4, DEPOSIT_FRACTION=0.1):
+                 TRADE_TYPE='PAPER', BUY_METHOD='LIMIT', MAX_TRADES=4, DEPOSIT_FRACTION=0.1,
+                 TAKE_PROFIT=0.015, STOP_LOSS=0.03):
         '''Main flow of the strategy: 
         get_active -> get_promising -> search_signals -> repeat'''
         
         self.BUY_METHOD = BUY_METHOD # Specify if we use LIMIT or MARKET order
         self.MAX_TRADES = MAX_TRADES # Number of open positions
         self.DEPOSIT_FRACTION = DEPOSIT_FRACTION # Fraction of the deposit in BTC we use for trading
-        self.TRADE_TYPE = TRADE_TYPE
+        self.TRADE_TYPE = TRADE_TYPE # Real trading or paper
+        self.TAKE_PROFIT = TAKE_PROFIT # Profit in fraction that we aim at
+        self.STOP_LOSS = STOP_LOSS # Stop loss in fraction of the price change
         
         active_list = self.refresh_active()
         promising = self.get_promising(active_list)
@@ -400,14 +407,17 @@ class C1M:
                     if 'orderId' in self.trading_coins[item]['order'].keys():
                         print("BUY PENDING:", item)
                         try:
-                            binance_endpoints.check_buy_order(self.trading_coins[item]['order'], self.trading_coins, item, self.TRADE_TYPE)
+                            binance_endpoints.check_buy_order(self.trading_coins[item]['order'], self.trading_coins, item, self.TRADE_TYPE,
+                                                              take_profit=self.TAKE_PROFIT, stop_loss=self.STOP_LOSS)
                         except Exception as e:
                             print("Didn't check BUY order", item)
                             print(e)
                     else:
                         print("OCO:", item)
                         try:
-                            binance_endpoints.check_oco_order(self.trading_coins[item]['order'], self.trading_coins, item, trade_type=self.TRADE_TYPE)
+                            binance_endpoints.check_oco_order(self.trading_coins[item]['order'], self.trading_coins, item, 
+                                                              trade_type=self.TRADE_TYPE,
+                                                              take_profit=self.TAKE_PROFIT, stop_loss=self.STOP_LOSS)
                         except Exception as e:
                             print("Didn't check OCO order", item)
                             print(e)                            
@@ -748,7 +758,8 @@ class Volume:
                                 # Important! Assume that only BUY orders can be open, SELL orders are MARKET (instant)
                                 # Check if the buy order have been filled:
                                 print("Yes, now check status of the BUY order")
-                                binance_endpoints.check_buy_order(self.in_trade[symbol]['order'], self.in_trade, symbol, BUY_TIME_LIMIT = 1, strategy = 'Volume')
+                                binance_endpoints.check_buy_order(self.in_trade[symbol]['order'], self.in_trade, symbol, 
+                                                                  BUY_TIME_LIMIT = 1, strategy = 'Volume')
                
     
                 ##logger.debug(f"{len(in_trade.keys())} coins are in trade")

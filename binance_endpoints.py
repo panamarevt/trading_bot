@@ -427,7 +427,8 @@ def cancel_order(order):
     result = client.cancel_order(symbol=order['symbol'], orderId=order['orderId'])
     return result
 
-def check_buy_order(order, trading_coins, coin, trade_type='REAL', BUY_TIME_LIMIT = 30, strategy='C1M' ):    
+def check_buy_order(order, trading_coins, coin, trade_type='REAL', BUY_TIME_LIMIT = 30, 
+                    take_profit = 0.015, stop_loss = 0.03, strategy='C1M' ):    
     '''order status response:
        {'symbol': 'WRXBTC',
          'orderId': 7895233,
@@ -467,7 +468,8 @@ def check_buy_order(order, trading_coins, coin, trade_type='REAL', BUY_TIME_LIMI
     if status == "FILLED":        
         if strategy == 'C1M':
             try:
-                trading_coins[coin]['order'] = place_oco_order(order['symbol'], order['price'], trade_type=trade_type )
+                trading_coins[coin]['order'] = place_oco_order(order['symbol'], order['price'], 
+                             take_profit=take_profit, stop_loss=stop_loss, trade_type=trade_type )
             except Exception as e:
                 print("WARNING!!!! OCO order didn't place!", e)
         elif strategy == 'Volume':
@@ -504,7 +506,8 @@ def check_buy_order(order, trading_coins, coin, trade_type='REAL', BUY_TIME_LIMI
     return status
 
         
-def check_oco_order(order, trading_coins, coin, time_limit = 10, trade_type='REAL'):
+def check_oco_order(order, trading_coins, coin, time_limit = 10, 
+                    take_profit=0.015, stop_loss=0.03, trade_type='REAL'):
     '''OCO order response:
     {'orderListId': 2804760,
          'contingencyType': 'OCO',
@@ -618,7 +621,8 @@ def check_oco_order(order, trading_coins, coin, time_limit = 10, trade_type='REA
             symbol = stop_loss_order['symbol']
             cancel_order(stop_loss_order)
             try: 
-                trading_coins[coin]['order'] = place_oco_order(symbol,trading_coins[coin]['buy_price'], take_profit=0.015,stop_loss=0.03)
+                trading_coins[coin]['order'] = place_oco_order(symbol,trading_coins[coin]['buy_price'], 
+                             take_profit=take_profit, stop_loss=stop_loss)
                 trading_coins[coin]['n_oco'] += 1
                 print("Placed 2nd OCO order", symbol)
             except Exception as e:
