@@ -27,6 +27,48 @@ def save_signal(t_curr, coin, price, counter, pattern):
     with open('buy_signals_pattern_new.dat', 'a') as f:
         f.write("%s   %5s    %.8f   %2d  %12s\n" % (t_curr, coin, price, counter, pattern))
 
+def save_signal_features(signal):
+    '''Save trade statistics to a file from the trade dictionary 'in_trade' '''
+    
+    fname = 'features.dat'
+            
+    with open(fname, 'a') as f:
+        empty = os.path.getsize(fname) == 0
+        
+        if empty:
+           for key in signal:
+               f.write(f"{key},")
+           f.write('\n')
+        for key in signal:
+           f.write(f'{signal[key]},')
+        f.write('\n') 
+    
+    return 0
+
+def predict_with_ML_model(filepath, features):
+    '''Loads a pre-trained machine-learning model located at `filepath` 
+    Makes a prediction. Returns 1 if success otherwise 0'''
+    import pickle
+    # load pre-trained model
+    pickle_in = open(filepath, 'rb')
+    logmodel_loaded = pickle.load(pickle_in)   
+    # use the model to predict the result
+    # need to reshape if we have only one sample here
+    prediction = logmodel_loaded.predict(np.array(features).reshape(1, -1))   
+    return prediction[-1]
+
+
+def diff_last(array, scale=15, scale_up=100000):
+    '''Returns difference of the last and one-to-last element of the `array`and devides it by `scale`
+    It is a way to compute derivative (slope) of a line represented by vector `array` where deltaX is `scale`
+    array -> pandas.Series'''
+    return (array.iloc[-1] - array.iloc[-2])*scale_up/15
+
+def check_pattern(pattern, word):
+    '''Returns 1 if pattern is in word, case insensitive'''
+    yes_no = 1 if pattern.lower() in word.lower() else 0
+    return yes_no
+
 def check_profit_new(coin_dict, price_curr, take_profit = 0.015, stop_loss = 0.03, trading="NO"):
     '''This is old function, to be deprecated'''
     coin = coin_dict['coin']
@@ -270,15 +312,20 @@ class C1M:
                     if stochRSI_signal:    
                         try:
                             buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
+                            rec_price = binance_endpoints.get_rec_price(symbol,buy_price)
                         except Exception as e:
                             print("Warning! Didn't get buy price!", e)
                             continue
                         if lower_BB_signal:
-                            dist_to_BB = 100*(middle.iloc[-1] - buy_price)/buy_price
+                            #dist_to_BB = 100*(middle.iloc[-1] - buy_price)/buy_price
+                            # Change buy_price to rec_price to be consistent with ML models:
+                            dist_to_BB = 100*(middle.iloc[-1] - rec_price)/rec_price
                             price_to_range = (buy_price - lower.iloc[-1])/(middle.iloc[-1] - lower.iloc[-1])
                         else:
-                            dist_to_BB = 100*(upper.iloc[-1] - buy_price)/buy_price
+                            #dist_to_BB = 100*(upper.iloc[-1] - buy_price)/buy_price
+                            dist_to_BB = 100*(upper.iloc[-1] - rec_price)/rec_price
                             price_to_range = (buy_price - middle.iloc[-1])/(upper.iloc[-1] - middle.iloc[-1])
+                        
                         price_cond = (dist_to_BB > 1.5)
                         
                         #price_dist_cond = (price_to_range < 0.1)
@@ -306,9 +353,10 @@ class C1M:
                         else:
                             #buy_price = close.iloc[-1]
                             try:
-                                buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
+                                # Buy price have been already computed above
+                                #buy_price = float(binance_endpoints.get_buy_price(symbol,self.BUY_METHOD))
                                 min_price = buy_price
-                                rec_price = binance_endpoints.get_rec_price(symbol,buy_price)
+                                #rec_price = binance_endpoints.get_rec_price(symbol,buy_price)
                             except Exception as e:
                                 print("Warning! Didn't get buy price and rec price!", e)
                                 continue
@@ -319,20 +367,79 @@ class C1M:
                             counter = 0
                             # Check if there was a candle pattern 1 or 2 canclesticks before:
                             pattern = indicators.check_candle_patterns(Open, high, low, close)
-                            
-                            save_signal(current_time, coin, buy_price, counter, pattern)
+                            last_candle_color = indicators.candle_params(Open.iloc[-2], high.iloc[-2], low.iloc[-2], close.iloc[-2])[-1]
                             # Create a new item in the dictionary of signalling coins, where coin is the key and time at the 1st signal is the item
                             status = 0
                             if lower_BB_signal:
                                 origin = 'lower'
                             else: origin = 'upper'
+                            
+                            save_signal(current_time, coin, buy_price, counter, pattern)
                             vol_1hr = volume[-4:].sum()
                             #triggered[coin] = [start_signal, buy_price, current_time, status]
                             #Create a dictionary with all coins that triggered a buy signal:
                             self.triggered[coin] = {'coin':coin, 'start_signal':start_signal, 'buy_price':buy_price, 'buy_time':current_time, 'status':status, 'counter':counter, \
                                      'vol_1hr':vol_1hr, 'pattern':pattern, 'origin':origin, 'ranging':ranging.iloc[-1], 'fastk15': fastk.iloc[-1], 'min_price':min_price }
                             n_trades = len(self.trading_coins)
-                            if (n_trades < self.MAX_TRADES) and (coin not in self.trading_coins.keys() ):
+                            
+                            if self.use_ML:
+                                # Prepare all proper features:
+                                
+                                # slope of the BBands width
+                                d_ranging = diff_last(ranging)
+                                # slopes of lower, middle and upper BBands:
+                                d_lower, d_upper, d_middle = diff_last(lower), diff_last(upper), diff_last(middle)
+                                # 10 and 200 preiod EMA
+                                ema_10 = indicators.EMA(close, 10)
+                                ema_200 = indicators.EMA(close, 200)
+                                # Slopes of 10 and 200 EMAs
+                                d_ema_10,d_ema_200 = diff_last(ema_10), diff_last(ema_200)
+                                # Slopes of %K and %D
+                                d_fastk, d_slowd = diff_last(fastk, scale_up=1), diff_last(slowd,scale_up=1)
+                                # Manual One-hot encoding for candle patterns, origin and last candle color:
+                                bullish = check_pattern('bullish', pattern)
+                                doji = check_pattern('doji', pattern)
+                                hammer = check_pattern('hammer', pattern)
+                                harami = check_pattern('harami', pattern)
+                                no = check_pattern('no', pattern)
+                                origin_lower = check_pattern('lower', origin)
+                                origin_upper = check_pattern('upper', origin)                               
+                                cangle_green = check_pattern('green', last_candle_color)
+                                cangle_red = check_pattern('red', last_candle_color)
+                                
+                                # Put all the features in an array:
+                                features = [rec_price, ranging.iloc[-1],d_ranging, lower.iloc[-1],upper.iloc[-1],middle.iloc[-1],
+                                            d_lower, d_upper, d_middle, ema_10.iloc[-1], ema_200.iloc[-1], d_ema_10,d_ema_200,
+                                            fastk.iloc[-1], slowd.iloc[-1], d_fastk, d_slowd, dist_to_BB,
+                                            bullish, doji, hammer, harami, no,
+                                            origin_lower, origin_upper, cangle_green, cangle_red]
+                                # Check if there are some NaNs:
+                                features = list(pd.Series(features).fillna(0))                                                                                                                                                                     
+                                # Predict if the trade is going to be profitable
+                                
+                                prediction = predict_with_ML_model(self.use_ML, features)
+                                print(f"Predicting the outcome of the trade ... {prediction}")
+
+                                # Quick-and-dirty solution to save the features info                             
+                                signal = {'time_curr':f'{current_time}', 'symbol':f'{symbol}','price':f'{rec_price:.8f}', 'pattern':f'{pattern}', 
+                                      'origin':f'{origin}', 'ranging': f'{ranging.iloc[-1]:.3f}', 'd_ranging':f'{d_ranging:.3f}',
+                                      'lower':f'{lower.iloc[-1]:.8f}', 'upper':f'{upper.iloc[-1]:.8f}', 'middle':f'{middle.iloc[-1]:.8f}',
+                                      'd_lower':f'{d_lower:.8f}', 'd_upper':f'{d_upper:.8f}', 'd_middle':f'{d_middle:.8f}',
+                                      'ema_10':f'{ema_10.iloc[-1]:.8f}', 'ema_200':f'{ema_200.iloc[-1]:.8f}',
+                                      'd_ema_10':f'{d_ema_10:.8f}', 'd_ema_200':f'{d_ema_200:.8f}',
+                                      'k_15':f'{fastk.iloc[-1]:.2f}', 'd_15':f'{slowd.iloc[-1]:.2f}', 
+                                      'd_k_15':f'{d_fastk:.2f}', 'd_d_15':f'{d_fastk:.2f}',
+                                      'candle_color':f'{last_candle_color}',
+                                      'dist_to_BB':f'{dist_to_BB:.3f}' }
+                                
+                                save_signal_features(signal)
+                            
+                            else:
+                                
+                                prediction = 1
+                                
+                            
+                            if (n_trades < self.MAX_TRADES) and (coin not in self.trading_coins.keys() ) and (prediction == 1):
                                 #in_trade = len(trading_coins)
                             
                                 print("Placing Buy Order")
@@ -376,7 +483,7 @@ class C1M:
     
     def c1m_flow(self, active_update_interval = 600, promise_update_interval = 300, 
                  TRADE_TYPE='PAPER', BUY_METHOD='LIMIT', MAX_TRADES=4, DEPOSIT_FRACTION=0.1,
-                 TAKE_PROFIT=0.015, STOP_LOSS=0.03):
+                 TAKE_PROFIT=0.015, STOP_LOSS=0.03, use_ML=False):
         '''Main flow of the strategy: 
         get_active -> get_promising -> search_signals -> repeat'''
         
@@ -386,6 +493,8 @@ class C1M:
         self.TRADE_TYPE = TRADE_TYPE # Real trading or paper
         self.TAKE_PROFIT = TAKE_PROFIT # Profit in fraction that we aim at
         self.STOP_LOSS = STOP_LOSS # Stop loss in fraction of the price change
+        self.use_ML = use_ML # Use Machine Learning model to predict succesfull trades. 
+                             # If not set use_ML = False, otherwise use_ML = path_to_pretrained_model
         
         active_list = self.refresh_active()
         promising = self.get_promising(active_list)
