@@ -227,12 +227,16 @@ class C1M:
             if coin in list(self.trading_coins):
                 if 'orderId' in self.trading_coins[coin]['order'].keys():
                     try:
-                        binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
+                        binance_endpoints.check_buy_order(self.trading_coins[coin]['order'], self.trading_coins, coin, 
+                                                          take_profit=self.TAKE_PROFIT, stop_loss=self.STOP_LOSS,
+                                                          trade_type=self.TRADE_TYPE)
                     except:
                         print("Warning: didn't check BUY order!")
                 else:
                     try:
-                        binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin, trade_type=self.TRADE_TYPE)
+                        binance_endpoints.check_oco_order(self.trading_coins[coin]['order'], self.trading_coins, coin, 
+                                                          take_profit=self.TAKE_PROFIT, stop_loss=self.STOP_LOSS,
+                                                          trade_type=self.TRADE_TYPE)
                     except:
                         print("Warning: didn't check OCO order!")
             # Check if coin signalled   in previous step of the loop                              
