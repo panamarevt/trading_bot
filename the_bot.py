@@ -52,13 +52,14 @@ if __name__=='__main__':
     c1m = strategies.C1M()
     
     ## Start the strategy:
-    ##c1m.c1m_flow(MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER')
+#    c1m.c1m_flow(MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER',
+#                 TAKE_PROFIT=0.015, STOP_LOSS=0.015, use_ML='ML-training/logregression.pickle')
     
     # Use try_func here to avoid some connection issues:
     # TODO! Better to add try and except EACH TIME we connect to an exchange!
     while True:        
         try_func(c1m.c1m_flow, step=10, duration=3600, MAX_TRADES=4, DEPOSIT_FRACTION=0.25, TRADE_TYPE='PAPER',
-                 TAKE_PROFIT=0.015, STOP_LOSS=0.015)
+                 TAKE_PROFIT=0.015, STOP_LOSS=0.015, use_ML='ML-training/logregression.pickle')
     
     # --------------------------------------------------------
     # Template to use Volume strategy:
