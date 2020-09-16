@@ -57,7 +57,7 @@ def get_symbols_BTC():
 def get_ticker(symbol):
     return client.get_ticker(symbol=symbol)
 
-def GetKlines(symbol, interval='15m', limit=200):
+def GetKlines(symbol, interval='15m', limit=300):
     '''Returns a data frame with the following columns as type 'float':
     [
         1499040000000,      # Open time (timestamp)
