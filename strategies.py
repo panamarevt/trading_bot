@@ -58,6 +58,7 @@ def predict_with_ML_model(filepath, features):
     return prediction[-1]
 
 def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
+                  volume,trades,tb_volume,
                   origin, dist_to_BB, rec_price, current_time, symbol,  status='curr'):
     '''Form features to predict trade outcome using a corresponding ML model'''
     # In case we predicting for the last closed candle:
@@ -96,7 +97,8 @@ def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
     # Put all the features in an array:
     features = [rec_price, ranging.iloc[-1],d_ranging, lower.iloc[-1],upper.iloc[-1],middle.iloc[-1],
                 d_lower, d_upper, d_middle, ema_10.iloc[-1], ema_200.iloc[-1], d_ema_10,d_ema_200,
-                fastk.iloc[-1], slowd.iloc[-1], d_fastk, d_slowd, dist_to_BB,
+                fastk.iloc[-1], slowd.iloc[-1], d_fastk, d_slowd, 
+                volume.iloc[-1],trades.iloc[-1],tb_volume.iloc[-1], dist_to_BB,
                 bullish, doji, hammer, harami, no,
                 origin_lower, origin_upper, cangle_green, cangle_red]
     # Check if there are some NaNs:
@@ -111,7 +113,8 @@ def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
       'k_15':f'{fastk.iloc[-1]:.2f}', 'd_15':f'{slowd.iloc[-1]:.2f}', 
       'd_k_15':f'{d_fastk:.2f}', 'd_d_15':f'{d_slowd:.2f}',
       'candle_color':f'{last_candle_color}',
-      'dist_to_BB':f'{dist_to_BB:.3f}'}
+      'dist_to_BB':f'{dist_to_BB:.3f}',
+      'volume':f'{volume.iloc[-1]:.2f}', 'ntrades':f'{trades.iloc[-1]}', 'tb_volume':f'{tb_volume.iloc[-1]:.2f}'}
   
     return features, signal
 
@@ -319,6 +322,7 @@ class C1M:
             Open, high = candles_df['open'], candles_df['high']
             low, close = candles_df['low'], candles_df['close']
             volume = candles_df['quote_av']
+            trades, tb_volume = candles_df['tb_quote_av'], candles_df['trades']
             
             coin = symbol[:-3]
             
@@ -443,9 +447,11 @@ class C1M:
 
                                 features_curr, signal = form_features(Open,high,low,close, ranging, 
                                                               lower,upper,middle, fastk,slowd,
+                                                              volume,trades,tb_volume,
                                                               origin, dist_to_BB, rec_price, current_time, symbol, status='curr')
                                 features_prev, _ = form_features(Open[:-1],high[:-1],low[:-1],close[:-1], ranging[:-1], 
                                                               lower[:-1],upper[:-1],middle[:-1], fastk[:-1],slowd[:-1],
+                                                              volume[:-1],trades[:-1],tb_volume[:-1],
                                                               origin, dist_to_BB, rec_price, current_time, symbol, status='prev')
                                 
                                 prediction_prev = predict_with_ML_model(self.use_ML, features_prev)
