@@ -428,7 +428,7 @@ class C1M:
                                       'ema_10':f'{ema_10.iloc[-1]:.8f}', 'ema_200':f'{ema_200.iloc[-1]:.8f}',
                                       'd_ema_10':f'{d_ema_10:.8f}', 'd_ema_200':f'{d_ema_200:.8f}',
                                       'k_15':f'{fastk.iloc[-1]:.2f}', 'd_15':f'{slowd.iloc[-1]:.2f}', 
-                                      'd_k_15':f'{d_fastk:.2f}', 'd_d_15':f'{d_fastk:.2f}',
+                                      'd_k_15':f'{d_fastk:.2f}', 'd_d_15':f'{d_slowd:.2f}',
                                       'candle_color':f'{last_candle_color}',
                                       'dist_to_BB':f'{dist_to_BB:.3f}' }
                                 
