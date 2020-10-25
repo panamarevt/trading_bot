@@ -57,6 +57,63 @@ def predict_with_ML_model(filepath, features):
     prediction = logmodel_loaded.predict(np.array(features).reshape(1, -1))   
     return prediction[-1]
 
+def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
+                  origin, dist_to_BB, rec_price, current_time, symbol,  status='curr'):
+    '''Form features to predict trade outcome using a corresponding ML model'''
+    # In case we predicting for the last closed candle:
+    if status != 'curr':
+        rec_price = close.iloc[-1]
+        if origin=='lower':
+            dist_to_BB = 100*(middle.iloc[-1] - rec_price)/rec_price
+        else:
+            dist_to_BB = 100*(upper.iloc[-1] - rec_price)/rec_price
+
+    # Prepare all proper features:
+    pattern = indicators.check_candle_patterns(Open, high, low, close)
+    last_candle_color = indicators.candle_params(Open.iloc[-2], high.iloc[-2], low.iloc[-2], close.iloc[-2])[-1]    
+    # slope of the BBands width
+    d_ranging = diff_last(ranging)
+    # slopes of lower, middle and upper BBands:
+    d_lower, d_upper, d_middle = diff_last(lower), diff_last(upper), diff_last(middle)
+    # 10 and 200 preiod EMA
+    ema_10 = indicators.EMA(close, 10)
+    ema_200 = indicators.EMA(close, 200)
+    # Slopes of 10 and 200 EMAs
+    d_ema_10,d_ema_200 = diff_last(ema_10), diff_last(ema_200)
+    # Slopes of %K and %D
+    d_fastk, d_slowd = diff_last(fastk, scale_up=1), diff_last(slowd,scale_up=1)
+    # Manual One-hot encoding for candle patterns, origin and last candle color:
+    bullish = check_pattern('bullish', pattern)
+    doji = check_pattern('doji', pattern)
+    hammer = check_pattern('hammer', pattern)
+    harami = check_pattern('harami', pattern)
+    no = check_pattern('no', pattern)
+    origin_lower = check_pattern('lower', origin)
+    origin_upper = check_pattern('upper', origin)                               
+    cangle_green = check_pattern('green', last_candle_color)
+    cangle_red = check_pattern('red', last_candle_color)
+    
+    # Put all the features in an array:
+    features = [rec_price, ranging.iloc[-1],d_ranging, lower.iloc[-1],upper.iloc[-1],middle.iloc[-1],
+                d_lower, d_upper, d_middle, ema_10.iloc[-1], ema_200.iloc[-1], d_ema_10,d_ema_200,
+                fastk.iloc[-1], slowd.iloc[-1], d_fastk, d_slowd, dist_to_BB,
+                bullish, doji, hammer, harami, no,
+                origin_lower, origin_upper, cangle_green, cangle_red]
+    # Check if there are some NaNs:
+    features = list(pd.Series(features).fillna(0))        
+
+    signal = {'time_curr':f'{current_time}', 'symbol':f'{symbol}','price':f'{rec_price:.8f}', 'pattern':f'{pattern}', 
+      'origin':f'{origin}', 'ranging': f'{ranging.iloc[-1]:.3f}', 'd_ranging':f'{d_ranging:.3f}',
+      'lower':f'{lower.iloc[-1]:.8f}', 'upper':f'{upper.iloc[-1]:.8f}', 'middle':f'{middle.iloc[-1]:.8f}',
+      'd_lower':f'{d_lower:.8f}', 'd_upper':f'{d_upper:.8f}', 'd_middle':f'{d_middle:.8f}',
+      'ema_10':f'{ema_10.iloc[-1]:.8f}', 'ema_200':f'{ema_200.iloc[-1]:.8f}',
+      'd_ema_10':f'{d_ema_10:.8f}', 'd_ema_200':f'{d_ema_200:.8f}',
+      'k_15':f'{fastk.iloc[-1]:.2f}', 'd_15':f'{slowd.iloc[-1]:.2f}', 
+      'd_k_15':f'{d_fastk:.2f}', 'd_d_15':f'{d_slowd:.2f}',
+      'candle_color':f'{last_candle_color}',
+      'dist_to_BB':f'{dist_to_BB:.3f}'}
+  
+    return features, signal
 
 def diff_last(array, scale=15, scale_up=100000):
     '''Returns difference of the last and one-to-last element of the `array`and devides it by `scale`
@@ -383,54 +440,20 @@ class C1M:
                             n_trades = len(self.trading_coins)
                             
                             if self.use_ML:
-                                # Prepare all proper features:
+
+                                features_curr, signal = form_features(Open,high,low,close, ranging, 
+                                                              lower,upper,middle, fastk,slowd,
+                                                              origin, dist_to_BB, rec_price, current_time, symbol, status='curr')
+                                features_prev, _ = form_features(Open[:-1],high[:-1],low[:-1],close[:-1], ranging[:-1], 
+                                                              lower[:-1],upper[:-1],middle[:-1], fastk[:-1],slowd[:-1],
+                                                              origin, dist_to_BB, rec_price, current_time, symbol, status='prev')
                                 
-                                # slope of the BBands width
-                                d_ranging = diff_last(ranging)
-                                # slopes of lower, middle and upper BBands:
-                                d_lower, d_upper, d_middle = diff_last(lower), diff_last(upper), diff_last(middle)
-                                # 10 and 200 preiod EMA
-                                ema_10 = indicators.EMA(close, 10)
-                                ema_200 = indicators.EMA(close, 200)
-                                # Slopes of 10 and 200 EMAs
-                                d_ema_10,d_ema_200 = diff_last(ema_10), diff_last(ema_200)
-                                # Slopes of %K and %D
-                                d_fastk, d_slowd = diff_last(fastk, scale_up=1), diff_last(slowd,scale_up=1)
-                                # Manual One-hot encoding for candle patterns, origin and last candle color:
-                                bullish = check_pattern('bullish', pattern)
-                                doji = check_pattern('doji', pattern)
-                                hammer = check_pattern('hammer', pattern)
-                                harami = check_pattern('harami', pattern)
-                                no = check_pattern('no', pattern)
-                                origin_lower = check_pattern('lower', origin)
-                                origin_upper = check_pattern('upper', origin)                               
-                                cangle_green = check_pattern('green', last_candle_color)
-                                cangle_red = check_pattern('red', last_candle_color)
-                                
-                                # Put all the features in an array:
-                                features = [rec_price, ranging.iloc[-1],d_ranging, lower.iloc[-1],upper.iloc[-1],middle.iloc[-1],
-                                            d_lower, d_upper, d_middle, ema_10.iloc[-1], ema_200.iloc[-1], d_ema_10,d_ema_200,
-                                            fastk.iloc[-1], slowd.iloc[-1], d_fastk, d_slowd, dist_to_BB,
-                                            bullish, doji, hammer, harami, no,
-                                            origin_lower, origin_upper, cangle_green, cangle_red]
-                                # Check if there are some NaNs:
-                                features = list(pd.Series(features).fillna(0))                                                                                                                                                                     
-                                # Predict if the trade is going to be profitable
-                                
-                                prediction = predict_with_ML_model(self.use_ML, features)
+                                prediction_prev = predict_with_ML_model(self.use_ML, features_prev)
+                                prediction = predict_with_ML_model(self.use_ML, features_curr)
                                 print(f"Predicting the outcome of the trade ... {prediction}")
 
                                 # Quick-and-dirty solution to save the features info                             
-                                signal = {'time_curr':f'{current_time}', 'symbol':f'{symbol}','price':f'{rec_price:.8f}', 'pattern':f'{pattern}', 
-                                      'origin':f'{origin}', 'ranging': f'{ranging.iloc[-1]:.3f}', 'd_ranging':f'{d_ranging:.3f}',
-                                      'lower':f'{lower.iloc[-1]:.8f}', 'upper':f'{upper.iloc[-1]:.8f}', 'middle':f'{middle.iloc[-1]:.8f}',
-                                      'd_lower':f'{d_lower:.8f}', 'd_upper':f'{d_upper:.8f}', 'd_middle':f'{d_middle:.8f}',
-                                      'ema_10':f'{ema_10.iloc[-1]:.8f}', 'ema_200':f'{ema_200.iloc[-1]:.8f}',
-                                      'd_ema_10':f'{d_ema_10:.8f}', 'd_ema_200':f'{d_ema_200:.8f}',
-                                      'k_15':f'{fastk.iloc[-1]:.2f}', 'd_15':f'{slowd.iloc[-1]:.2f}', 
-                                      'd_k_15':f'{d_fastk:.2f}', 'd_d_15':f'{d_slowd:.2f}',
-                                      'candle_color':f'{last_candle_color}',
-                                      'dist_to_BB':f'{dist_to_BB:.3f}' }
+                                signal['pred_prev'] = f'{prediction_prev}'
                                 
                                 save_signal_features(signal)
                             
