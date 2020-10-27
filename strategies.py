@@ -59,7 +59,7 @@ def predict_with_ML_model(filepath, features):
 
 def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
                   volume,trades,tb_volume,
-                  origin, dist_to_BB, rec_price, current_time, symbol,  status='curr'):
+                  origin, dist_to_BB, rec_price, current_time, symbol,  status='curr', scale=1e5):
     '''Form features to predict trade outcome using a corresponding ML model'''
     # In case we predicting for the last closed candle:
     if status != 'curr':
@@ -73,14 +73,14 @@ def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
     pattern = indicators.check_candle_patterns(Open, high, low, close)
     last_candle_color = indicators.candle_params(Open.iloc[-2], high.iloc[-2], low.iloc[-2], close.iloc[-2])[-1]    
     # slope of the BBands width
-    d_ranging = diff_last(ranging)
+    d_ranging = diff_last(ranging, scale_up=1)
     # slopes of lower, middle and upper BBands:
-    d_lower, d_upper, d_middle = diff_last(lower), diff_last(upper), diff_last(middle)
+    d_lower, d_upper, d_middle = diff_last(lower, scale_up=scale), diff_last(upper, scale_up=scale), diff_last(middle, scale_up=scale)
     # 10 and 200 preiod EMA
     ema_10 = indicators.EMA(close, 10)
     ema_200 = indicators.EMA(close, 200)
     # Slopes of 10 and 200 EMAs
-    d_ema_10,d_ema_200 = diff_last(ema_10), diff_last(ema_200)
+    d_ema_10,d_ema_200 = diff_last(ema_10, scale_up=scale), diff_last(ema_200, scale_up=scale)
     # Slopes of %K and %D
     d_fastk, d_slowd = diff_last(fastk, scale_up=1), diff_last(slowd,scale_up=1)
     # Manual One-hot encoding for candle patterns, origin and last candle color:
@@ -94,9 +94,9 @@ def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
     cangle_green = check_pattern('green', last_candle_color)
     cangle_red = check_pattern('red', last_candle_color)
     
-    # Put all the features in an array:
-    features = [rec_price, ranging.iloc[-1],d_ranging, lower.iloc[-1],upper.iloc[-1],middle.iloc[-1],
-                d_lower, d_upper, d_middle, ema_10.iloc[-1], ema_200.iloc[-1], d_ema_10,d_ema_200,
+    # Put all the features in an array and scale (note that the derivatives have been scaled in function diff_last) :
+    features = [rec_price*scale, ranging.iloc[-1],d_ranging, lower.iloc[-1]*scale,upper.iloc[-1]*scale,middle.iloc[-1]*scale,
+                d_lower, d_upper, d_middle, ema_10.iloc[-1]*scale, ema_200.iloc[-1]*scale, d_ema_10,d_ema_200,
                 fastk.iloc[-1], slowd.iloc[-1], d_fastk, d_slowd, 
                 volume.iloc[-1],trades.iloc[-1],tb_volume.iloc[-1], dist_to_BB,
                 bullish, doji, hammer, harami, no,
@@ -104,6 +104,7 @@ def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
     # Check if there are some NaNs:
     features = list(pd.Series(features).fillna(0))        
 
+    # Note. Save prices without scaling, but derivatives with scaling. (TODO! Do it in a better way in future!)
     signal = {'time_curr':f'{current_time}', 'symbol':f'{symbol}','price':f'{rec_price:.8f}', 'pattern':f'{pattern}', 
       'origin':f'{origin}', 'ranging': f'{ranging.iloc[-1]:.3f}', 'd_ranging':f'{d_ranging:.3f}',
       'lower':f'{lower.iloc[-1]:.8f}', 'upper':f'{upper.iloc[-1]:.8f}', 'middle':f'{middle.iloc[-1]:.8f}',
@@ -118,11 +119,11 @@ def form_features(Open,high,low,close, ranging, lower,upper,middle, fastk,slowd,
   
     return features, signal
 
-def diff_last(array, scale=15, scale_up=100000):
-    '''Returns difference of the last and one-to-last element of the `array`and devides it by `scale`
-    It is a way to compute derivative (slope) of a line represented by vector `array` where deltaX is `scale`
+def diff_last(array, scale_down=15, scale_up=1):
+    '''Returns difference of the last and one-to-last element of the `array`and devides it by `scale_down`
+    It is a way to compute derivative (slope) of a line represented by vector `array` where deltaX is `scale_down`
     array -> pandas.Series'''
-    return (array.iloc[-1] - array.iloc[-2])*scale_up/15
+    return (array.iloc[-1] - array.iloc[-2])*scale_up/scale_down
 
 def check_pattern(pattern, word):
     '''Returns 1 if pattern is in word, case insensitive'''
