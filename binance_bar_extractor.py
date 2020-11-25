@@ -79,7 +79,7 @@ def binanceBarUpdater(symbol,  today = datetime.datetime.today(),  where='Crypto
             print(e)
     else:
         print(f"File {filename} doesn't exist") 
-        binanceBarExtractor(symbol)
+        binanceBarExtractor(symbol, where=where)
     
 
 def extract_parallel(symbols):
