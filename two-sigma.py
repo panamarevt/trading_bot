@@ -17,6 +17,11 @@ Idea. If the price goes below the open price for the current time-frame by the v
 wait until the price goes back to its original value (or some fraction of it) and sell.
 Use the same take profit and stop-loss. The value of 2-sigma should be at least 1%.
 '''
+# Make it possible to buy fractional sizes of shares (in our case cryptocurrencies)
+class CommInfoFractional(bt.CommissionInfo):
+    def getsize(self, price, cash):
+        '''Returns fractional size for cash operation @price'''
+        return self.p.leverage * (cash / price)
 
 #class RSIStrategy(bt.Strategy):
 #    
@@ -56,7 +61,15 @@ class TestStrategy(bt.Strategy):
                 self.log('BUY CREATE, %.2f' % self.dataclose[0])
                 self.buy()
 
-class TwoSigmaStrategy(bt.Strategy):
+
+class TenUpStrategy(bt.Strategy):
+    params = (
+        ('pcup', 10),
+        ('take_profit', 10),
+        ('stop_loss', 10),
+        ('max_days', 1),
+    )    
+    
     
     def log(self, txt, dt=None):
         ''' Logging function fot this strategy'''
@@ -64,61 +77,30 @@ class TwoSigmaStrategy(bt.Strategy):
         print('%s, %s' % (dt.isoformat(), txt))
     
     def __init__(self):
-        #self.rsi = bt.talib.RSI(self.data, period=14)
-        print("Initializing the strategy...")
-        # Initialize indicators:
-        self.mid = bt.ind.SimpleMovingAverage(self.data1, period=20)
-        self.sigma = bt.ind.StandardDeviation(self.data1, period=20)
-        # One standard deviation 
-        self.sigma_pc = 100 * (self.mid - self.sigma) / self.mid
-        self.open = self.datas[0].open
-        self.close = self.datas[0].close
-        self.high = self.datas[0].high
-        self.low = self.datas[0].low
-        self.down = 100*(self.open - self.low) / self.open
-        
-        
-        
-        self.buy_price = self.open - 1*self.sigma
-        self.order = None
-        #self.profit_price = self.buy_price + 0.5*self.sigma
-        #self.loss_price = self.buy_price - 0.5*self.sigma
-        print(self.close)
-               
-
+        # Keep a reference to the "close" line in the data[0] dataseries
+        self.cl = self.datas[0].close
+        #self.bar_executed = 0
+    
     def next(self):
-        #if self.close[0] < self.open[0] and self.sigma_pc[0] > 1.0 and not self.position:
-        self.log('Close, %.2f' % self.close[0])
-        
-        print(len(self))
-        print(self.order )
-        print(self.position)
-        
-        if self.down > 1.0 and not self.position:
-            #print(self.buy_price[0])
-            self.log('BUY CREATE, %.2f' % self.close[0])
-            print(self.open[0])
-            print(self.close[0])
-            print(self.low[0])
-            print(self.down[0])
-            #print(self.sigma[0])
-            
-            #print("Create BUY order", self.close[0])
-            print(self.position)
-            self.enter = self.low[0]
-            self.profit_price = (1+0.01)*self.enter
-            self.loss_price = (1-0.01)*self.enter
-            
-            self.buy(size=1)
-            print(self.position)
-        
+        # Simply log the closing price of the series from the reference
+        self.log('Close, %.2f' % self.cl[0])
+
+        if not self.position and ( self.cl[0] > self.cl[-1] > self.cl[-2] ):
+            # Check if price went up in 2 days at least by pcup days
+            if 100*(self.cl[0] - self.cl[-2])/self.cl[-2] > self.params.pcup :
+                self.log('BUY CREATE, %.2f' % self.cl[0])
+                self.bar_executed = len(self)
+                self.buy()                
+            # current close less than previous close
+
         if self.position:
-            if (self.high[0] > self.profit_price):  
-                print("PROFIT", self.close[0])
+            if len(self) == self.bar_executed + self.params.max_days:
+                self.log('SELL CREATE, %.2f' % self.cl[0])                
                 self.close()
-            elif (self.low[0] <= self.loss_price):
-                print("LOSS")
-                self.close()
+                
+
+
+
 
 
 
@@ -185,32 +167,165 @@ class BuyDipStrategy(bt.Strategy):
                 
         self.count += 1
 
+
+
+class TwoSigmaStrategy(bt.Strategy):
+    params = (
+        ('time_period', 60), # At which time-frames to trade (in minutes)
+        ('sigma_fac', 2), # Factor to multiply std
+        ('fac_back', 0.5), # Fraction of original pc pullback we hope to be rocovered
+        ('take_profit', None),
+        ('stop_loss', 150),
+        ('max_hold', 5), # Max number of hours to hold the position
+        ('trend_cond', False), # Apply trend condition on not. Trend condition means to execute the trades only during the trend
+    )    
+    def log(self, txt, dt=None):
+        ''' Logging function fot this strategy'''
+        dt = dt or self.datas[0].datetime.date(0)
+        print('%s, %s' % (dt.strftime("%d %b %Y %H:%M:%S"), txt))
+    
+    def __init__(self):
+        self.op = self.datas[0].open
+        self.cl = self.datas[0].close
+        self.count = 0
+        self.cl_1hr = []
+        self.hr_count = 0                
+
+    def next(self):      
+        # A stupid way to check open price for 1-hr candle
+        
+        if self.count == self.p.time_period:
+            self.cl_1hr.append(self.cl[0])
+            #self.log('Close, %.2f' % self.cl[0])
+            self.count = 0
+            self.hr_count += 1
+
+        if self.count == 0:
+            self.op_1hr = self.op[0]
+
+        # Check if we reached minimum number of periods to compute mean and standard deviation:
+        if len(self.cl_1hr) >= 20:
+            #print("Now we can compute std ..")
+            cl_1hr_tmp = np.array(self.cl_1hr[-20:])
+            self.sigma = np.std(cl_1hr_tmp)
+            self.mid = np.mean(cl_1hr_tmp)
+            self.sigma_pc = 100 * self.sigma / self.mid
+            #self.log(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
+        else:
+            self.count += 1
+            return 0            
+        
+        # DEBUG
+#        if self.count == 0:
+#            self.log(f'MEAN: {self.mid:.2f}; STD: {self.sigma:.2f}; STD_pc: {self.sigma_pc:.2f}')       
+        
+        if not self.position:
+            self.down = 100*(self.op_1hr - self.cl[0]) / self.op_1hr
+            pc_buy = self.params.sigma_fac*self.sigma_pc
+            #DEBUG:
+#            if self.count == 0:                 
+#                self.log(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
+            if self.down > pc_buy :
+            #print(self.buy_price[0])
+                self.log('BUY CREATE, %.2f' % self.cl[0])
+                # Fractional size:
+                self.size = self.broker.get_cash() / self.cl[0]
+                self.buy(size=self.size)
+                # Remeber at what `hour` index the trade was executed:
+                self.hour_executed = self.hr_count
+                self.buy_price = self.cl[0]
+                self.take_profit = self.params.take_profit or self.params.fac_back*pc_buy
+                self.take_profit = (1+self.take_profit*0.01)*self.buy_price
+                self.stop_loss = self.params.stop_loss or self.params.fac_back*pc_buy
+                self.stop_loss = (1-self.stop_loss*0.01)*self.buy_price                
+                #self.stop_loss = self.params.stop_loss or (1-self.params.fac_back*pc_buy*0.01)*self.buy_price
+                print(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
+                print(f'Profit target: {self.take_profit:.2f}; Loss target: {self.stop_loss:.2f}')
+        
+        if self.position:
+            if (self.cl[0] > self.take_profit):  
+                print("PROFIT", self.cl[0])
+                self.close()
+            elif (self.cl[0] <= self.stop_loss):
+                print("LOSS")
+                self.close()
+            else:
+                if (self.hr_count - self.hour_executed) >= self.params.max_hold:
+                    self.close()
+                    profit = 100*(self.cl[0] - self.buy_price)/self.buy_price
+                    print(f'PROFIT/LOSS: {profit:.2f}%')
+        self.count += 1
+
+
+
 # Instantiate the main class 
 cerebro = bt.Cerebro()
 
-fromdate = datetime.datetime.strptime('2021-01-01', '%Y-%m-%d')
-todate = datetime.datetime.strptime('2021-01-06', '%Y-%m-%d')
+fromdate = datetime.datetime.strptime('2020-11-01', '%Y-%m-%d')
+todate = datetime.datetime.strptime('2021-01-12', '%Y-%m-%d')
 
-cerebro.broker.set_cash(100000)
+#cerebro.broker.set_cash(100000)
+#cerebro.broker.set_cash(1000)
+cerebro.broker.set_cash(1000)
+#cerebro.addsizer(bt.sizers.FixedSize, stake=100)
 cerebro.broker.setcommission(commission=0.00075)
 
-data = bt.feeds.GenericCSVData(dataname='BTCUSDT_1MinuteBars.csv',  
+# Fractional size to buy:
+cerebro.broker.addcommissioninfo(CommInfoFractional())
+
+#dataname = 'BTCUSDT_1MinuteBars.csv'
+#dataname = 'LINKUSDT_1MinuteBars.csv'
+#dataname = 'LINKBTC_1MinuteBars.csv'
+dataname = 'ETHBTC_1MinuteBars.csv'
+
+data = bt.feeds.GenericCSVData(dataname=dataname,  
                                timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
 
 
 
 cerebro.adddata(data)
 #cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
+#cerebro.resampledata(data, timeframe = bt.TimeFrame.Days, compression=1)
 
-cerebro.addstrategy(BuyDipStrategy)
+#cerebro.addstrategy(TwoSigmaStrategy)
+
+#Optimize strategy
+cerebro.optstrategy(TwoSigmaStrategy, time_period=(5,15,30,60), fac_back=(0.5, 0.75, 1.0))
+
+# Add TimeReturn Analyzers to benchmark data
+#Daily (or any other period) return on investment
+cerebro.addanalyzer(
+    bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Days
+)
+# Statistics for periods
+cerebro.addanalyzer(
+    bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
+)
+# All-time ROI
+cerebro.addanalyzer(
+    bt.analyzers.TimeReturn, _name="alltime_roi", timeframe=bt.TimeFrame.NoTimeFrame
+)
+# Return on buy-and-hold strategy
+cerebro.addanalyzer(
+    bt.analyzers.TimeReturn,
+    data=data,
+    _name="benchmark",
+    timeframe=bt.TimeFrame.NoTimeFrame,
+)
+
+#print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+#
+## Run over everything
+#cerebro.run()
+#
+## Print out the final result
+#print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
 
 
-print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+results = cerebro.run()
+st0 = results[0]
 
-# Run over everything
-cerebro.run()
+for alyzer in st0.analyzers:
+    alyzer.print()
 
-# Print out the final result
-print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
-
-cerebro.plot()
+#cerebro.plot()
