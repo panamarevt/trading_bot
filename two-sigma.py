@@ -239,8 +239,8 @@ class TwoSigmaStrategy(bt.Strategy):
                 self.stop_loss = self.params.stop_loss or self.params.fac_back*pc_buy
                 self.stop_loss = (1-self.stop_loss*0.01)*self.buy_price                
                 #self.stop_loss = self.params.stop_loss or (1-self.params.fac_back*pc_buy*0.01)*self.buy_price
-                print(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
-                print(f'Profit target: {self.take_profit:.2f}; Loss target: {self.stop_loss:.2f}')
+                #print(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
+                #print(f'Profit target: {self.take_profit:.2f}; Loss target: {self.stop_loss:.2f}')
         
         if self.position:
             if (self.cl[0] > self.take_profit):  
@@ -261,7 +261,7 @@ class TwoSigmaStrategy(bt.Strategy):
 # Instantiate the main class 
 cerebro = bt.Cerebro()
 
-fromdate = datetime.datetime.strptime('2020-11-01', '%Y-%m-%d')
+fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
 todate = datetime.datetime.strptime('2021-01-12', '%Y-%m-%d')
 
 #cerebro.broker.set_cash(100000)
@@ -275,8 +275,8 @@ cerebro.broker.addcommissioninfo(CommInfoFractional())
 
 #dataname = 'BTCUSDT_1MinuteBars.csv'
 #dataname = 'LINKUSDT_1MinuteBars.csv'
-#dataname = 'LINKBTC_1MinuteBars.csv'
-dataname = 'ETHBTC_1MinuteBars.csv'
+dataname = 'BQXETH_1MinuteBars.csv'
+#dataname = 'ETHBTC_1MinuteBars.csv'
 
 data = bt.feeds.GenericCSVData(dataname=dataname,  
                                timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
@@ -287,15 +287,15 @@ cerebro.adddata(data)
 #cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
 #cerebro.resampledata(data, timeframe = bt.TimeFrame.Days, compression=1)
 
-#cerebro.addstrategy(TwoSigmaStrategy)
+cerebro.addstrategy(TwoSigmaStrategy, time_period=15, fac_back=0.5)
 
 #Optimize strategy
-cerebro.optstrategy(TwoSigmaStrategy, time_period=(5,15,30,60), fac_back=(0.5, 0.75, 1.0))
+#cerebro.optstrategy(TwoSigmaStrategy, time_period=15, fac_back=(0.5, 0.75, 1.0))
 
 # Add TimeReturn Analyzers to benchmark data
 #Daily (or any other period) return on investment
 cerebro.addanalyzer(
-    bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Days
+    bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Months
 )
 # Statistics for periods
 cerebro.addanalyzer(
