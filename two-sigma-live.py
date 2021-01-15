@@ -264,68 +264,74 @@ def parse_args():
 
     parser.add_argument(
         '--interval', '-i',
-        default=15, type='int',
+        default=15, type=int,
         help='Period interval to trade on, in minutes. Accepted values:1,3,5,15,30,60')
 
     parser.add_argument(
         '--sigma', '-x',
-        default=2.0, type='float',
+        default=2.0, type=float,
         help='Factor to multiply one standard deviation')    
     
     parser.add_argument(
         '--fback', '-f',
-        default=0.5, type='float',
+        default=0.5, type=float,
         help='Factor for expected recovery from the buy price')
 
     parser.add_argument(
-        '--max-hold', '-m',
-        default=5, type='int',
+        '--maxhold', '-m',
+        default=5, type=int,
         help='Maximum number of bars to hold the position')
 
     parser.add_argument(
         '--cash', '-c',
-        default=1000, type='float',
+        default=1000, type=float,
         help='Amount of cash to start trading with')
 
     parser.add_argument(
         '--log', '-l',
         default=None,
-        help='Filename to save logging data. If None nothing is saved')     
-    
-    parser.add_argument(
-        '--jobs', '-j',
-        type=int, required=False, default=0,
-        help=('Number of CPUs to use in the optimization'
-              '\n'
-              '  - 0 (default): use all available CPUs\n'
-              '  - 1 -> n: use as many as specified\n'))
-
-
-
+        help='Filename to save logging data. If None the default filename is used: {symbol}_{interval}.log')         
 
     return parser.parse_args()
         
+def starting_summary(args):
+    print("Starting summary of the strategy: ")
+    for var in vars(args):
+        print(f"{var}: {vars(args)[var]}")
         
 if __name__=='__main__':
     
+    #Get Args
+    args = parse_args()
     
-    
-    time_period = 15
-    symbol = 'bqxbtc'
+    time_period = args.interval
+    symbol = args.symbol
     #symbol='linkusdt'
     if time_period == 60:
         interval='1h'
     else:
         interval = f'{time_period}m'
+    args.log = args.log or f'{symbol}_{interval}.log'
+    logfile = args.log
+    
+    starting_summary(args)
+    
+
     #closes = binance_endpoints.GetKlines(symbol.upper(), interval=f'{time_period}m', limit=100)
     closes = binance_endpoints.GetKlines(symbol.upper(), interval=interval, limit=100)
     closes = list(closes.close.iloc[-20:])
     
     SOCKET = f"wss://stream.binance.com:9443/ws/{symbol}@kline_{interval}"
-    logfile = f'{symbol}_{interval}.log'
+    
+    
+    sigma_fac = args.sigma
+    fac_back = args.fback
+    max_hold = args.maxhold
+    cash = args.cash
+    
     #closes = []
-    Strategy = TwoSigmaStrategy(time_period=time_period, sigma_fac=0.25, fac_back=0.5, symbol=symbol.upper(), 
-                                logfile=logfile, max_hold=1, deposit_fraction=1000)
+    Strategy = TwoSigmaStrategy(time_period=time_period, sigma_fac=sigma_fac, fac_back=fac_back, symbol=symbol.upper(), 
+                                logfile=logfile, max_hold=max_hold, deposit_fraction=cash)
     
     ws = websocket.WebSocketApp(SOCKET, on_open=on_open, on_close=on_close, on_message=on_message)
     
