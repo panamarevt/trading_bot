@@ -19,8 +19,27 @@ Use the same take profit and stop-loss. The value of 2-sigma should be at least 
 '''
 # Make it possible to buy fractional sizes of shares (in our case cryptocurrencies)
 class CommInfoFractional(bt.CommissionInfo):
+
     def getsize(self, price, cash):
         '''Returns fractional size for cash operation @price'''
+        return self.p.leverage * (cash / price)
+
+
+class BitmexComissionInfo(bt.CommissionInfo):
+    params = (
+        ("commission", 0.00075),
+        ("mult", 1.0),
+        ("margin", None),
+        ("commtype", None),
+        ("stocklike", False),
+        ("percabs", False),
+        ("interest", 0.0),
+        ("interest_long", False),
+        ("leverage", 1.0),
+        ("automargin", False),
+    )
+    def getsize(self, price, cash):
+        """Returns fractional size for cash operation @price"""
         return self.p.leverage * (cash / price)
 
 #class RSIStrategy(bt.Strategy):
@@ -181,7 +200,7 @@ class TwoSigmaStrategy(bt.Strategy):
     )    
     def log(self, txt, dt=None):
         ''' Logging function fot this strategy'''
-        dt = dt or self.datas[0].datetime.date(0)
+        dt = dt or self.datas[0].datetime.datetime(0)
         print('%s, %s' % (dt.strftime("%d %b %Y %H:%M:%S"), txt))
     
     def __init__(self):
@@ -189,10 +208,61 @@ class TwoSigmaStrategy(bt.Strategy):
         self.cl = self.datas[0].close
         self.count = 0
         self.cl_1hr = []
-        self.hr_count = 0                
+        self.hr_count = 0      
+        self.order = None
+        self.buyprice = None
+        self.buycomm = None
+        self.val_start = self.broker.get_cash() # keep the starting cash
+        self.commision = 0.00075
+        self.total_comm = 0
+
+    def notify_order(self, order):
+        if order.status in [order.Submitted, order.Accepted]:
+            # Buy/Sell order submitted/accepted to/by broker - Nothing to do
+            return
+
+        # Check if an order has been completed
+        # Attention: broker could reject order if not enough cash
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                order.executed.comm = order.executed.value*self.commision
+                self.log(
+                    'BUY EXECUTED, Price: %.8f, Cost: %.8f, Comm %.8f' %
+                    (order.executed.price,
+                     order.executed.value,
+                     order.executed.comm))
+
+                self.buyprice = order.executed.price
+                self.buycomm = order.executed.comm
+                self.total_comm += order.executed.value*self.commision
+            else:  # Sell
+                order.executed.comm = order.executed.value*self.commision
+                self.log('SELL EXECUTED, Price: %.8f, Cost: %.8f, Comm %.8f' %
+                         (order.executed.price,
+                          order.executed.value,
+                          order.executed.comm))
+                self.total_comm += order.executed.value*self.commision
+            self.bar_executed = len(self)
+
+        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
+            self.log('Order Rejected')
+
+        self.order = None
+
+    def notify_trade(self, trade):
+        if not trade.isclosed:
+            return
+
+        self.log('OPERATION PROFIT, GROSS %.2f, NET %.2f' %
+                 (trade.pnl, trade.pnlcomm))
+        
+    
 
     def next(self):      
         # A stupid way to check open price for 1-hr candle
+        
+        if self.order:
+            return
         
         if self.count == self.p.time_period:
             self.cl_1hr.append(self.cl[0])
@@ -218,6 +288,7 @@ class TwoSigmaStrategy(bt.Strategy):
         # DEBUG
 #        if self.count == 0:
 #            self.log(f'MEAN: {self.mid:.2f}; STD: {self.sigma:.2f}; STD_pc: {self.sigma_pc:.2f}')       
+        #print(self.position)
         
         if not self.position:
             self.down = 100*(self.op_1hr - self.cl[0]) / self.op_1hr
@@ -227,26 +298,27 @@ class TwoSigmaStrategy(bt.Strategy):
 #                self.log(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
             if self.down > pc_buy :
             #print(self.buy_price[0])
-                self.log('BUY CREATE, %.2f' % self.cl[0])
+                self.log('BUY CREATE, %.8f' % self.cl[0])
                 # Fractional size:
                 self.size = self.broker.get_cash() / self.cl[0]
-                self.buy(size=self.size)
+                self.order = self.buy(size=self.size, exectype=bt.Order.Market)
                 # Remeber at what `hour` index the trade was executed:
                 self.hour_executed = self.hr_count
-                self.buy_price = self.cl[0]
-                self.take_profit = self.params.take_profit or self.params.fac_back*pc_buy
-                self.take_profit = (1+self.take_profit*0.01)*self.buy_price
-                self.stop_loss = self.params.stop_loss or self.params.fac_back*pc_buy
-                self.stop_loss = (1-self.stop_loss*0.01)*self.buy_price                
+                #self.buy_price = self.cl[0]
+                self.buy_price = self.op[1]
+                take_profit = self.params.take_profit or self.params.fac_back*pc_buy
+                self.profit_target = (1+take_profit*0.01)*self.buy_price
+                stop_loss = self.params.stop_loss or self.params.fac_back*pc_buy
+                self.loss_target = (1-stop_loss*0.01)*self.buy_price                
                 #self.stop_loss = self.params.stop_loss or (1-self.params.fac_back*pc_buy*0.01)*self.buy_price
                 #print(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
                 #print(f'Profit target: {self.take_profit:.2f}; Loss target: {self.stop_loss:.2f}')
         
-        if self.position:
-            if (self.cl[0] > self.take_profit):  
+        else:
+            if (self.cl[0] > self.profit_target):  
                 print("PROFIT", self.cl[0])
                 self.close()
-            elif (self.cl[0] <= self.stop_loss):
+            elif (self.cl[0] <= self.loss_target):
                 print("LOSS")
                 self.close()
             else:
@@ -256,26 +328,36 @@ class TwoSigmaStrategy(bt.Strategy):
                     print(f'PROFIT/LOSS: {profit:.2f}%')
         self.count += 1
 
-
+    def stop(self):
+        """ Calculate the actual returns """
+        val_end = self.broker.get_value() - self.total_comm
+        self.roi = (val_end / self.val_start) - 1.0
+        
+        print(
+            f"ROI: {100.0 * self.roi:.2f}%, Start cash {self.val_start:.2f}, "
+            f"End cash: {val_end:.2f},  Total comm: {self.total_comm:.2f}"
+        )
 
 # Instantiate the main class 
 cerebro = bt.Cerebro()
 
-fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
+fromdate = datetime.datetime.strptime('2020-04-01', '%Y-%m-%d')
 todate = datetime.datetime.strptime('2021-01-12', '%Y-%m-%d')
 
 #cerebro.broker.set_cash(100000)
 #cerebro.broker.set_cash(1000)
 cerebro.broker.set_cash(1000)
 #cerebro.addsizer(bt.sizers.FixedSize, stake=100)
-cerebro.broker.setcommission(commission=0.00075)
+#cerebro.broker.setcommission(commission=0.00075)
+#cerebro.broker.setcommission(commission=0.00075)
 
 # Fractional size to buy:
 cerebro.broker.addcommissioninfo(CommInfoFractional())
 
+
 #dataname = 'BTCUSDT_1MinuteBars.csv'
-#dataname = 'LINKUSDT_1MinuteBars.csv'
-dataname = 'BQXETH_1MinuteBars.csv'
+dataname = 'LINKUSDT_1MinuteBars.csv'
+#dataname = 'BQXBTC_1MinuteBars.csv'
 #dataname = 'ETHBTC_1MinuteBars.csv'
 
 data = bt.feeds.GenericCSVData(dataname=dataname,  
@@ -287,8 +369,10 @@ cerebro.adddata(data)
 #cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
 #cerebro.resampledata(data, timeframe = bt.TimeFrame.Days, compression=1)
 
-cerebro.addstrategy(TwoSigmaStrategy, time_period=15, fac_back=0.5)
+cerebro.addstrategy(TwoSigmaStrategy, time_period=30, fac_back=0.5, max_hold=5)
+#cerebro.broker.addcommissioninfo(CommInfoFractional())
 
+#cerebro.broker.addcommissioninfo(BitmexComissionInfo())
 #Optimize strategy
 #cerebro.optstrategy(TwoSigmaStrategy, time_period=15, fac_back=(0.5, 0.75, 1.0))
 
@@ -313,16 +397,20 @@ cerebro.addanalyzer(
     timeframe=bt.TimeFrame.NoTimeFrame,
 )
 
-#print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
 #
 ## Run over everything
 #cerebro.run()
 #
 ## Print out the final result
-#print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+
 
 
 results = cerebro.run()
+
+print('----------------------------------------------------------------------------')
+print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+
 st0 = results[0]
 
 for alyzer in st0.analyzers:

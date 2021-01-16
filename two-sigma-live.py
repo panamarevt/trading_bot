@@ -311,7 +311,7 @@ if __name__=='__main__':
         interval='1h'
     else:
         interval = f'{time_period}m'
-    args.log = args.log or f'{symbol}_{interval}.log'
+    args.log = args.log or f'{symbol}_{interval}.log' 
     logfile = args.log
     
     starting_summary(args)
