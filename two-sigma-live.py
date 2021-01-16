@@ -293,12 +293,16 @@ def parse_args():
         help='Filename to save logging data. If None the default filename is used: {symbol}_{interval}.log')         
 
     return parser.parse_args()
+
         
 def starting_summary(args):
     print("Starting summary of the strategy: ")
     for var in vars(args):
         print(f"{var}: {vars(args)[var]}")
-        
+ 
+
+#---------------------------------------------------------------
+       
 if __name__=='__main__':
     
     #Get Args
