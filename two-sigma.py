@@ -11,6 +11,8 @@ import datetime
 #import pandas as pd
 #import indicators
 import os
+
+import argparse
 '''
 This is the two-sigma strategy.
 Idea. If the price goes below the open price for the current time-frame by the value of 2 standard deviations from its moving average we buy,
@@ -119,10 +121,6 @@ class TenUpStrategy(bt.Strategy):
                 
 
 
-
-
-
-
 class BuyDipStrategy(bt.Strategy):
     params = (
         ('pcdown', 3),
@@ -190,6 +188,7 @@ class BuyDipStrategy(bt.Strategy):
 
 class TwoSigmaStrategy(bt.Strategy):
     params = (
+        ('symbol', 'btcusdt'),
         ('time_period', 60), # At which time-frames to trade (in minutes)
         ('sigma_fac', 2), # Factor to multiply std
         ('sigma_max', 100), # Max value for std in % (100 means no limit)
@@ -283,7 +282,7 @@ class TwoSigmaStrategy(bt.Strategy):
             empty = os.path.getsize(self.p.save_stats) == 0
             if empty:
                 f.write("buytime,symbol,buyprice,pnl,gross,net,fee,cash,sigma\n")
-            f.write(f"{self.buy_time},{symbol},{self.buyprice:.8f},")
+            f.write(f"{self.buy_time},{self.p.symbol},{self.buyprice:.8f},")
             f.write(f"{100*trade_pnl:.2f},{gross:.2f},{net:.2f},{fee:.2f},")
             f.write(f"{self.true_cash:.8f},{self.sigma_pc_exec:.2f}")
             f.write("\n")
@@ -377,89 +376,158 @@ class TwoSigmaStrategy(bt.Strategy):
             empty = os.path.getsize(summary_file) == 0
             if empty:
                 f.write(f"symbol,interval,maxhold,sigma_min,facback,ntrades,ROI,start,fees\n")
-            f.write(f"{symbol},{time_period},{self.p.max_hold},{self.p.sigma_min},")
+            f.write(f"{self.p.symbol},{self.p.time_period},{self.p.max_hold},{self.p.sigma_min},")
             f.write(f"{self.p.fac_back:.2f},{self.ntrades},{100*self.roi:.2f}%,")
             f.write(f"{self.start_day},{self.total_comm:.2f}\n")
 
-# Instantiate the main class 
-cerebro = bt.Cerebro()
-
-fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
-todate = datetime.datetime.strptime('2021-01-12', '%Y-%m-%d')
-
-cerebro.broker.set_cash(1000)
-
-# Fractional size to buy:
-cerebro.broker.addcommissioninfo(CommInfoFractional())
-
-symbol='linkusdt'
-#symbol='bqxeth'
-#symbol='dotbnb'
-#symbol='cvcbtc'
-
-time_period = 30
-fac_back=0.5
-max_hold=5
-sigma_max = 100
-
-save_stats = f"{symbol}_{time_period}m_fback{fac_back}_hold{max_hold}_smax{sigma_max}.csv"
-#dataname = 'BTCUSDT_1MinuteBars.csv'
-dataname = f'{symbol.upper()}_1MinuteBars.csv'
-#dataname = 'BQXBTC_1MinuteBars.csv'
-#dataname = 'ETHBTC_1MinuteBars.csv'
-
-data = bt.feeds.GenericCSVData(dataname=dataname,  
-                               timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
 
 
+def parse_args():
+    ''' Main parameters of the strategy:
+    sigma_fac
+    fac_back
+    max_hold
+    '''
+    parser = argparse.ArgumentParser(
+        description='Backtest for the 2-Sigma Strategy',
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
 
-cerebro.adddata(data)
-#cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
-#cerebro.resampledata(data, timeframe = bt.TimeFrame.Days, compression=1)
+    parser.add_argument(
+        '--symbol', '-s',
+        default='btcusdt',
+        help='Trading symbol, str, e.g.: btcusdt')
 
-cerebro.addstrategy(TwoSigmaStrategy, time_period=time_period, fac_back=fac_back, max_hold=max_hold, 
-                    sigma_max = sigma_max, save_stats=save_stats)
-#cerebro.broker.addcommissioninfo(CommInfoFractional())
+    parser.add_argument(
+        '--interval', '-i',
+        default=15, type=int,
+        help='Period interval to trade on, in minutes. Accepted values:1,3,5,15,30,60')
 
-#cerebro.broker.addcommissioninfo(BitmexComissionInfo())
-#Optimize strategy
-#cerebro.optstrategy(TwoSigmaStrategy, time_period=15, fac_back=(0.5, 0.75, 1.0))
+    parser.add_argument(
+        '--sigma', '-x',
+        default=2.0, type=float,
+        help='Factor to multiply one standard deviation')    
+    
+    parser.add_argument(
+        '--fback', '-f',
+        default=0.5, type=float,
+        help='Factor for expected recovery from the buy price')
 
-# Add TimeReturn Analyzers to benchmark data
-#Daily (or any other period) return on investment
-cerebro.addanalyzer(
-    bt.analyzers.SQN, _name="sqn")
+    parser.add_argument(
+        '--maxhold', '-m',
+        default=5, type=int,
+        help='Maximum number of bars to hold the position')
 
-cerebro.addanalyzer(
-    bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Months
-)
-# Statistics for periods
-cerebro.addanalyzer(
-    bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
-)
-# All-time ROI
-cerebro.addanalyzer(
-    bt.analyzers.TimeReturn, _name="alltime_roi", timeframe=bt.TimeFrame.NoTimeFrame
-)
-# Return on buy-and-hold strategy
-cerebro.addanalyzer(
-    bt.analyzers.TimeReturn,
-    data=data,
-    _name="benchmark",
-    timeframe=bt.TimeFrame.NoTimeFrame,
-)
+    parser.add_argument(
+        '--cash', '-c',
+        default=1000, type=float,
+        help='Amount of cash to start trading with')
 
-print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
-#
+    parser.add_argument(
+        '--log', '-l',
+        default=None,
+        help='Filename to save logging data. If None the default filename is used: {symbol}_{interval}.log')         
 
-results = cerebro.run()
+    return parser.parse_args()
 
-print('----------------------------------------------------------------------------')
-print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
 
-st0 = results[0]
-
-for alyzer in st0.analyzers:
-    alyzer.print()
+def run(args, symb=None):
+    
+    # Instantiate the main class 
+    cerebro = bt.Cerebro()
+    
+    fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
+    todate = datetime.datetime.strptime('2021-01-12', '%Y-%m-%d')
+    
+    cerebro.broker.set_cash(1000)
+    
+    # Fractional size to buy:
+    cerebro.broker.addcommissioninfo(CommInfoFractional())
+    
+    #symbol='linkusdt'
+    ##symbol='bqxeth'
+    ##symbol='dotbnb'
+    ##symbol='cvcbtc'
+    #
+    #time_period = 30
+    #fac_back=0.5
+    #max_hold=5
+    
+    sigma_max = 100
+    time_period = args.interval
+    symbol = symb or args.symbol # Check if we want to pass another symbol to the test
+    fac_back = args.fback
+    max_hold = args.maxhold
+    
+    
+    save_stats = f"{symbol}_{time_period}m_fback{fac_back}_hold{max_hold}_smax{sigma_max}.csv"
+    #dataname = 'BTCUSDT_1MinuteBars.csv'
+    dataname = f'{symbol.upper()}_1MinuteBars.csv'
+    #dataname = 'BQXBTC_1MinuteBars.csv'
+    #dataname = 'ETHBTC_1MinuteBars.csv'
+    
+    data = bt.feeds.GenericCSVData(dataname=dataname,  
+                                   timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
+    
+    
+    
+    cerebro.adddata(data)
+    #cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
+    #cerebro.resampledata(data, timeframe = bt.TimeFrame.Days, compression=1)
+    
+    cerebro.addstrategy(TwoSigmaStrategy, time_period=time_period, fac_back=fac_back, max_hold=max_hold, 
+                        sigma_max = sigma_max, save_stats=save_stats)
+    #cerebro.broker.addcommissioninfo(CommInfoFractional())
+    
+    #cerebro.broker.addcommissioninfo(BitmexComissionInfo())
+    #Optimize strategy
+    #cerebro.optstrategy(TwoSigmaStrategy, time_period=15, fac_back=(0.5, 0.75, 1.0))
+    
+    # Add TimeReturn Analyzers to benchmark data
+    #Daily (or any other period) return on investment
+    cerebro.addanalyzer(
+        bt.analyzers.SQN, _name="sqn")
+    
+    cerebro.addanalyzer(
+        bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Months
+    )
+    # Statistics for periods
+    cerebro.addanalyzer(
+        bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
+    )
+    # All-time ROI
+    cerebro.addanalyzer(
+        bt.analyzers.TimeReturn, _name="alltime_roi", timeframe=bt.TimeFrame.NoTimeFrame
+    )
+    # Return on buy-and-hold strategy
+    cerebro.addanalyzer(
+        bt.analyzers.TimeReturn,
+        data=data,
+        _name="benchmark",
+        timeframe=bt.TimeFrame.NoTimeFrame,
+    )
+    
+    print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+    #
+    
+    results = cerebro.run()
+    
+    print('----------------------------------------------------------------------------')
+    print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+    
+    st0 = results[0]
+    
+    for alyzer in st0.analyzers:
+        alyzer.print()
 
 #cerebro.plot()
+        
+        
+if __name__=='__main__':
+    
+    #Get Args
+    args = parse_args()
+    
+    #Run the whole thing
+    run(args, symb='dotbnb')    
+        

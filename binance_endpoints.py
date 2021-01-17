@@ -20,7 +20,7 @@ import os
 client = Client(api_key=keys.Pkey, api_secret=keys.Skey)
 
 
-def get_symbols_BTC():
+def get_symbols_BTC(base='BTC'):
     import json
     import requests
     #import time
@@ -48,9 +48,16 @@ def get_symbols_BTC():
             
     tickers_list = json.loads(resp.content)
     
+
     # Select only pairs with BTC
     for ticker in tickers_list:
-        if (str(ticker['symbol'])[-3:] == 'BTC')  and (float(ticker['askQty']) > 0) :
+        # Do we want to get all symbol tickers?
+        if base=='all':             
+            base_cond = str(ticker['symbol'])[-3:] in ['SDT','BTC','ETH','BNB']
+        else:
+        # Or just selected for base asset
+            base_cond = str(ticker['symbol'])[-3:] == base        
+        if (base_cond)  and (float(ticker['askQty']) > 0) :
             symbols.append(ticker['symbol'])
     return symbols
 

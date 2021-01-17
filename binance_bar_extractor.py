@@ -56,9 +56,10 @@ def binanceBarUpdater(symbol,  today = datetime.datetime.today(),  where='Crypto
     #filename = '{}_1MinuteBars.csv'.format(symbol)
     filename = where + symbol + '_1MinuteBars.csv'
     #logging.info(f'working...{symbol}')
+    now = datetime.datetime.now().strftime("%d %b %Y %H:%M:%S")
     
     if os.path.isfile(filename):
-        print(f"Update {filename} ...")
+        print(f"{now}    Update {filename} ...")
         last_line = open(filename, 'r').readlines()[-1]
         start_date = pd.to_datetime(last_line.split(',')[0])
         #today = pd.to_datetime(datetime.datetime.now())
@@ -78,31 +79,33 @@ def binanceBarUpdater(symbol,  today = datetime.datetime.today(),  where='Crypto
             print(f"Didn't download {symbol}")
             print(e)
     else:
-        print(f"File {filename} doesn't exist") 
+        #print(f"File {filename} doesn't exist") 
+        
+        print(f"{now}    Donwload {filename} ...")
         binanceBarExtractor(symbol, where=where)
     
 
-def extract_parallel(symbols):
+def extract_parallel(symbols, n_threads = 8):
     # use threading here to run the function in parallel
     i = 0
     while i < len(symbols):
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             #executor.map(binanceBarExtractor, symbols[i:i+8])
-            if i + 8 <= len(symbols):
-                executor.map(binanceBarUpdater, symbols[i:i+8])
+            if i + n_threads <= len(symbols):
+                executor.map(binanceBarUpdater, symbols[i:i+n_threads])
             else:
                 executor.map(binanceBarUpdater, symbols[i:])
-        i += 8
+        i += n_threads
      
     
 
 if __name__ == '__main__':
     # Obviously replace BTCUSDT with whichever symbol you want from binance
     # Wherever you've saved this code is the same directory you will find the resulting CSV file
-    #symbols = get_symbols_BTC()
+    symbols = get_symbols_BTC(base='all')
 
-    #start_date = datetime.datetime.strptime('1 A 2020', '%d %b %Y')
+    start_date = datetime.datetime.strptime('1 Jan 2020', '%d %b %Y')
     #today = datetime.datetime.today()
 
 #symbols=['ETHBTC','STEEMBTC']
@@ -114,10 +117,10 @@ if __name__ == '__main__':
 #            print("Didn't download %s" % symbol)
 #            continue
 
-    #extract_parallel(symbols)   
+    extract_parallel(symbols, n_threads = 8)   
     
-    symbol = 'BTCUSDT'
-    binanceBarUpdater(symbol, where='')
+#    symbol = 'BTCUSDT'
+#    binanceBarUpdater(symbol, where='')
 
 
 #    for symbol in symbols:
