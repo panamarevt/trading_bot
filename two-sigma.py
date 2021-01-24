@@ -208,6 +208,8 @@ class TwoSigmaStrategy(bt.Strategy):
     def __init__(self):
         self.op = self.datas[0].open
         self.cl = self.datas[0].close
+        self.hi = self.datas[0].high
+        self.lo = self.datas[0].low
         self.count = 0
         self.cl_1hr = []
         self.hr_count = 0      
@@ -252,8 +254,11 @@ class TwoSigmaStrategy(bt.Strategy):
                 self.cost = order.executed.value
             self.bar_executed = len(self)
 
-        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            self.log('Order Rejected')
+        elif order.status in [order.Canceled, order.Rejected]:
+            #print(order.status)
+            self.log('Order Canceled/Rejected')
+        elif order.status in [order.Margin]:
+            self.log('Order Margin')
 
         self.order = None
 
@@ -281,10 +286,10 @@ class TwoSigmaStrategy(bt.Strategy):
         with open(self.p.save_stats, 'a') as f:
             empty = os.path.getsize(self.p.save_stats) == 0
             if empty:
-                f.write("buytime,symbol,buyprice,pnl,gross,net,fee,cash,sigma\n")
+                f.write("buytime,symbol,buyprice,pnl,gross,net,fee,cash,sigma,mindown,maxup\n")
             f.write(f"{self.buy_time},{self.p.symbol},{self.buyprice:.8f},")
             f.write(f"{100*trade_pnl:.2f},{gross:.2f},{net:.2f},{fee:.2f},")
-            f.write(f"{self.true_cash:.8f},{self.sigma_pc_exec:.2f}")
+            f.write(f"{self.true_cash:.8f},{self.sigma_pc_exec:.2f},{self.mindown:.2f},{self.maxup:.2f}")
             f.write("\n")
         
     
@@ -325,35 +330,66 @@ class TwoSigmaStrategy(bt.Strategy):
 #                self.log(f'2-SIGMA: {pc_buy:.1f}; DOWN: {self.down:.1f}')
             if (self.down > pc_buy) and (self.p.sigma_min < self.sigma_pc < self.p.sigma_max) :
             #print(self.buy_price[0])
+                print(f"Current cash: {self.true_cash:.2f}")    
                 self.log('BUY CREATE, %.8f' % self.cl[0])
                 # Fractional size:
-                #self.size = self.broker.get_cash() / self.cl[0]
-                self.size = self.true_cash / self.cl[0]
+                self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
+                #self.size = self.true_cash / self.cl[0]
                 self.order = self.buy(size=self.size, exectype=bt.Order.Market)
                 self.buy_time = self.datas[0].datetime.datetime(1).strftime("%d %b %Y %H:%M:%S")
+                self.buy_price = self.op[1]
+                self.bar_executed = len(self)
+                trade_tmp = 60*self.p.max_hold
+                # Form temporary arrays of highs and lows (slicing thhrough self.hi[:] doesn't work for some reason)
+                high_tmp = np.array([self.hi[i] for i in range(1,trade_tmp)])
+                #low_tmp = np.array([self.lo[i] for i in range(1,trade_tmp)])
+                self.max_price = high_tmp.max()
+                #self.min_price = low_tmp.min()
+                self.maxup = 100*(self.max_price - self.buy_price)/self.buy_price
+                #self.mindown = 100*(self.min_price - self.buy_price)/self.buy_price
                 self.sigma_pc_exec = self.sigma_pc
                 # Remeber at what `hour` index the trade was executed:
                 self.hour_executed = self.hr_count
-                #self.buy_price = self.cl[0]
-                self.buy_price = self.op[1]
+                #self.buy_price = self.cl[0]           
                 take_profit = self.params.take_profit or self.params.fac_back*pc_buy
                 self.profit_target = (1+take_profit*0.01)*self.buy_price
                 stop_loss = self.params.stop_loss or self.params.fac_back*pc_buy
-                self.loss_target = (1-stop_loss*0.01)*self.buy_price                
+                
+                self.loss_target = (1-stop_loss*0.01)*self.buy_price
+                print(f"Profit target: {self.profit_target:.8f}; Loss target:{self.loss_target:.8f}")                
         
         else:
             if (self.cl[0] > self.profit_target):  
                 print("PROFIT", self.cl[0])                
+                trade_tmp = len(self) - self.bar_executed
+                #print(trade_tmp)
+                if trade_tmp <= 1:
+                    low_tmp = self.lo[0]
+                else:
+                    low_tmp = np.array([self.lo[-i] for i in range(0,trade_tmp)]).min()
+                self.mindown = 100*(low_tmp - self.buy_price)/self.buy_price
                 self.close()
                 self.sellprice = self.profit_target
                 self.record_trade()
             elif (self.cl[0] <= self.loss_target):
                 print("LOSS")                
+                trade_tmp = len(self) - self.bar_executed
+                if trade_tmp <= 1:
+                    low_tmp = self.lo[0]
+                else:
+                    low_tmp = np.array([self.lo[-i] for i in range(0,trade_tmp)]).min()
+                self.mindown = 100*(low_tmp - self.buy_price)/self.buy_price             
                 self.close()
                 self.sellprice = self.loss_target
                 self.record_trade()
             else:
-                if (self.hr_count - self.hour_executed) >= self.params.max_hold:                    
+                if (self.hr_count - self.hour_executed) >= self.params.max_hold: 
+                    trade_tmp = len(self) - self.bar_executed
+                    if trade_tmp <= 1:
+                        low_tmp = self.lo[0]
+                    else:
+                        low_tmp = np.array([self.lo[-i] for i in range(0,trade_tmp)]).min()
+                    self.mindown = 100*(low_tmp - self.buy_price)/self.buy_price
                     self.close()
                     self.sellprice = self.cl[0]
                     self.record_trade()
@@ -475,8 +511,8 @@ def run(args, symb=None):
     #cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
     #cerebro.resampledata(data, timeframe = bt.TimeFrame.Days, compression=1)
     
-    cerebro.addstrategy(TwoSigmaStrategy, time_period=time_period, fac_back=fac_back, max_hold=max_hold, 
-                        sigma_max = sigma_max, save_stats=save_stats)
+    cerebro.addstrategy(TwoSigmaStrategy, time_period=time_period, fac_back=fac_back, max_hold=max_hold, stop_loss=None,
+                        sigma_max = sigma_max, save_stats=save_stats, symbol=symbol)
     #cerebro.broker.addcommissioninfo(CommInfoFractional())
     
     #cerebro.broker.addcommissioninfo(BitmexComissionInfo())
@@ -507,6 +543,7 @@ def run(args, symb=None):
         timeframe=bt.TimeFrame.NoTimeFrame,
     )
     
+    cerebro.broker.set_checksubmit(False)
     print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
     #
     
@@ -529,5 +566,5 @@ if __name__=='__main__':
     args = parse_args()
     
     #Run the whole thing
-    run(args, symb='dotbnb')    
+    run(args, symb=args.symbol)    
         
