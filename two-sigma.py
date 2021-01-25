@@ -29,7 +29,7 @@ class CommInfoFractional(bt.CommissionInfo):
 
 class BitmexComissionInfo(bt.CommissionInfo):
     params = (
-        ("commission", 0.00075),
+        ("commission", 0.075),
         ("mult", 1.0),
         ("margin", None),
         ("commtype", None),
@@ -223,6 +223,8 @@ class TwoSigmaStrategy(bt.Strategy):
         self.sellprice = None
         self.cost = None
         self.ntrades=0
+        self.total_net = 0
+        self.total_gross = 0
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
@@ -233,26 +235,23 @@ class TwoSigmaStrategy(bt.Strategy):
         # Attention: broker could reject order if not enough cash
         if order.status in [order.Completed]:
             if order.isbuy():
-                order.executed.comm = order.executed.value*self.commision
                 self.log(
-                    'BUY EXECUTED, Price: %.8f, Cost: %.8f, Comm %.8f' %
+                    'BUY EXECUTED, Price: %.2f, Cost: %.2f, Comm %.5f' %
                     (order.executed.price,
                      order.executed.value,
                      order.executed.comm))
 
                 self.buyprice = order.executed.price
                 self.buycomm = order.executed.comm
-                self.total_comm += order.executed.value*self.commision
+                self.total_comm += self.buycomm
             else:  # Sell
-                order.executed.comm = order.executed.value*self.commision
-                self.log('SELL EXECUTED, Price: %.8f, Cost: %.8f, Comm %.8f' %
+                self.log('SELL EXECUTED, Price: %.2f, Cost: %.2f, Comm %.5f' %
                          (order.executed.price,
                           order.executed.value,
                           order.executed.comm))
-                self.total_comm += order.executed.value*self.commision
-                self.sellprice = order.executed.price
-                self.cost = order.executed.value
+
             self.bar_executed = len(self)
+            self.total_comm += order.executed.comm
 
         elif order.status in [order.Canceled, order.Rejected]:
             #print(order.status)
@@ -268,7 +267,8 @@ class TwoSigmaStrategy(bt.Strategy):
 
         self.log('OPERATION PROFIT, GROSS %.2f, NET %.2f' %
                  (trade.pnl, trade.pnlcomm))
-        
+        self.total_net += trade.pnlcomm
+        self.total_gross += trade.pnl
     
     def record_trade(self):
         '''Save basic statistics for each trade in csv format'''
@@ -276,9 +276,12 @@ class TwoSigmaStrategy(bt.Strategy):
         self.ntrades += 1
         if not self.p.save_stats: return
                 
-        self.cost = self.true_cash
+        #self.cost = self.true_cash
+        self.cost = self.broker.get_cash()
         trade_pnl = (self.sellprice - self.buyprice)/self.buyprice
+        #net = trade.pnlcomm
         gross = trade_pnl * self.cost
+        #gross = trade.pnl
         fee = 2*self.cost*self.commision
         net = gross - fee
         self.true_cash += net
@@ -341,7 +344,11 @@ class TwoSigmaStrategy(bt.Strategy):
                 self.bar_executed = len(self)
                 trade_tmp = 60*self.p.max_hold
                 # Form temporary arrays of highs and lows (slicing thhrough self.hi[:] doesn't work for some reason)
-                high_tmp = np.array([self.hi[i] for i in range(1,trade_tmp)])
+                try:
+                    high_tmp = np.array([self.hi[i] for i in range(1,trade_tmp)])
+                except IndexError: # If the data for future are not available
+                    self.log(f"Data for the next {self.p.max_hold} bars are not available!")
+                    high_tmp = [self.hi[0]]
                 #low_tmp = np.array([self.lo[i] for i in range(1,trade_tmp)])
                 self.max_price = high_tmp.max()
                 #self.min_price = low_tmp.min()
@@ -407,13 +414,19 @@ class TwoSigmaStrategy(bt.Strategy):
             f"End cash: {self.true_cash:.2f},  Total comm: {self.total_comm:.2f}"
         )
         
+        self.roi2 = (self.broker.get_cash() / self.val_start) - 1.0
+        print(
+            f"ROI2: {100.0 * self.roi2:.2f}%, Start cash {self.val_start:.2f}, "
+            f"Total profit: {self.total_net:.2f},  Total Gross: {self.total_gross:.2f}"
+        )        
+        
         summary_file = 'summary_all.dat'
         with open(summary_file, 'a') as f:
             empty = os.path.getsize(summary_file) == 0
             if empty:
                 f.write(f"symbol,interval,maxhold,sigma_min,facback,ntrades,ROI,start,fees\n")
             f.write(f"{self.p.symbol},{self.p.time_period},{self.p.max_hold},{self.p.sigma_min},")
-            f.write(f"{self.p.fac_back:.2f},{self.ntrades},{100*self.roi:.2f}%,")
+            f.write(f"{self.p.fac_back:.2f},{self.ntrades},{100*self.roi2:.2f}%,")
             f.write(f"{self.start_day},{self.total_comm:.2f}\n")
 
 
@@ -478,7 +491,7 @@ def run(args, symb=None):
     cerebro.broker.set_cash(1000)
     
     # Fractional size to buy:
-    cerebro.broker.addcommissioninfo(CommInfoFractional())
+    #cerebro.broker.addcommissioninfo(CommInfoFractional())
     
     #symbol='linkusdt'
     ##symbol='bqxeth'
@@ -515,7 +528,7 @@ def run(args, symb=None):
                         sigma_max = sigma_max, save_stats=save_stats, symbol=symbol)
     #cerebro.broker.addcommissioninfo(CommInfoFractional())
     
-    #cerebro.broker.addcommissioninfo(BitmexComissionInfo())
+    cerebro.broker.addcommissioninfo(BitmexComissionInfo())
     #Optimize strategy
     #cerebro.optstrategy(TwoSigmaStrategy, time_period=15, fac_back=(0.5, 0.75, 1.0))
     
