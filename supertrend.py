@@ -113,8 +113,9 @@ class SuperTrend(bt.Indicator):
 class SuperTrendStrategy(bt.Strategy):    
     params = (('strendperiod', 10),
               ('strendmult', 3),
-              ('take_profit', 0.015),
-              ('stop_loss', 0.03)
+              ('take_profit', 0.016),
+              ('stop_loss', 0.03),
+              ('side', 'long'),
               )
 
     def __init__(self):
@@ -126,11 +127,12 @@ class SuperTrendStrategy(bt.Strategy):
         
         #self.supertrend_band = SuperTrendBand(self.data, period=self.p.strendperiod, multiplier=self.p.strendmult)
         self.supertrend = SuperTrend(self.data, period=self.p.strendperiod, multiplier=self.p.strendmult)
-        
+        self.atr = bt.indicators.AverageTrueRange(period=self.p.strendperiod)
         self.uptrend = self.op > self.supertrend.lines.super_trend
         
         self.profit_target = None
         self.loss_target = None
+        self.trade_type = None # Mark if we are in short or in long position
 
 
     def log(self, txt, dt=None):
@@ -179,51 +181,93 @@ class SuperTrendStrategy(bt.Strategy):
         self.log('OPERATION PROFIT, GROSS %.2f, NET %.2f' %
                  (trade.pnl, trade.pnlcomm))
 
-    def trend_signal(self, cond='touch'):
+    def trend_signal(self, cond='touch', side='long'):
+        '''Check if there is a BUY/SELL signal for a SuperTrend strategy
+        returns True if the signal conditions are met, otherwise False.
+        ------------------------
+        parameters:
+        cond - condition for the signal 
+             = 'touch' - if last candle touched supertrend line, buy on open of current candle
+             = 'green' - current candle closed green (red for short) after supertrend line, previous candle touched the supertrend line
+        side - long or short strategy
+             = 'long' - to check for LONG signal
+             = 'short' to check for SHORT signal'''
         if cond == 'touch':
-            signal = self.lo < self.supertrend.l.super_trend and self.cl > self.supertrend.l.super_trend
+            if side=='long':
+                signal = self.lo < self.supertrend.l.super_trend and self.cl > self.supertrend.l.super_trend
+            if side=='short':
+                signal = self.hi > self.supertrend.l.super_trend and self.cl < self.supertrend.l.super_trend
         if cond == 'green':
-            signal = (self.lo[-1] < self.supertrend.l.super_trend[-1] and self.cl[-1] > self.supertrend.l.super_trend[-1]) \
-                and (self.cl > self.op and self.cl > self.supertrend.l.super_trend)
+            if side=='long':
+                signal = (self.lo[-1] < self.supertrend.l.super_trend[-1] and self.cl[-1] > self.supertrend.l.super_trend[-1]) \
+                    and (self.cl > self.op and self.cl > self.supertrend.l.super_trend)
+            if side=='short':
+                signal = (self.hi[-1] > self.supertrend.l.super_trend[-1] and self.cl[-1] < self.supertrend.l.super_trend[-1]) \
+                    and (self.cl < self.op and self.cl < self.supertrend.l.super_trend)                
         return signal
         
         
     def next(self):
         if not self.position:
-            if self.uptrend:
+            if self.uptrend and (self.p.side == 'long' or self.p.side == 'both'):
                 #if self.lo < self.supertrend.l.super_trend and self.cl > self.supertrend.l.super_trend :
 #                if self.lo[-1] < self.supertrend.l.super_trend[-1] and self.cl[-1] > self.supertrend.l.super_trend[-1] :
 #                    if self.cl > self.op and self.cl > self.supertrend.l.super_trend:
-             if self.trend_signal(cond='touch'):
-                    self.log(f"Prince signal!  Buy at {self.cl[0]}")
-                    self.profit_target = (1+self.p.take_profit)*self.cl[0] 
-                    self.loss_target = (1-self.p.stop_loss)*self.cl[0]
-                    self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
-                    self.buy(size=self.size, exectype=bt.Order.Market)
-                    
+                signal_long = self.trend_signal(cond='touch', side='long')
+                if signal_long:
+                        self.log(f"Price signal!  Buy at {self.cl[0]}")
+                        self.profit_target = (1+self.p.take_profit)*self.cl[0] 
+                        self.loss_target = (1-self.p.stop_loss)*self.cl[0]
+                        self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
+                        self.buy(size=self.size, exectype=bt.Order.Market)
+                        self.trade_type = 'long'
+                        #if self.p.side == 'long': return                        
+            if (not self.uptrend) and (self.p.side == 'short'or self.p.side == 'both'):
+                signal_short = self.trend_signal(cond='touch', side='short')
+                if signal_short:
+                        self.log(f"Price signal!  Sell at {self.cl[0]}")
+                        self.profit_target = (1-self.p.take_profit)*self.cl[0] 
+                        self.loss_target = (1+self.p.stop_loss)*self.cl[0]
+                        self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
+                        self.sell(size=self.size, exectype=bt.Order.Market)
+                        self.trade_type = 'short'
                              
         else:
-            if (self.cl[0] > self.profit_target):  
-                self.log(f"PROFIT! {self.cl[0]}")   
-                self.close()
-                self.profit_target = None
-            if (self.cl[0] <= self.loss_target): 
-                self.log(f"LOSS! {self.cl[0]}")   
-                self.close()
-                self.loss_target = None      
-
+            if self.trade_type == 'long': # if we are in a `long` position
+                if (self.cl[0] > self.profit_target):  
+                    self.log(f"PROFIT! {self.cl[0]}")   
+                    self.close()
+                    self.profit_target = None
+                if (self.cl[0] <= self.loss_target): 
+                    self.log(f"LOSS! {self.cl[0]}")   
+                    self.close()
+                    self.loss_target = None      
+            if self.trade_type == 'short': # if we are in a `short` position
+                if (self.cl[0] < self.profit_target):  
+                    self.log(f"PROFIT! {self.cl[0]}")   
+                    self.close()
+                    self.profit_target = None
+                if (self.cl[0] >= self.loss_target): 
+                    self.log(f"LOSS! {self.cl[0]}")   
+                    self.close()
+                    self.loss_target = None                 
 
 cerebro = bt.Cerebro()
 
-fromdate = datetime.datetime.strptime('2021-01-01', '%Y-%m-%d')
-todate = datetime.datetime.strptime('2021-04-11', '%Y-%m-%d')
+fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
+todate = datetime.datetime.strptime('2021-04-12', '%Y-%m-%d')
 
 cerebro.broker.set_cash(1000)
 
-#symbol = 'BTCUSDT'
+symbol = 'BTCUSDT'
 #symbol = 'BNBBTC'
-symbol = 'LINKUSDT'
-#    symbol = 'ETHUSDT'
+#symbol = 'BNBETH'
+#symbol = 'LINKETH'
+#symbol = 'BNBUSDT'
+#symbol = 'ETHUSDT'
+#symbol = 'AAVEBTC'
+#symbol = 'ADABNB'
+#symbol = 'CAKEBNB'
 dataname = f'{symbol.upper()}_1MinuteBars.csv'
 #dataname = 'BQXBTC_1MinuteBars.csv'
 #dataname = 'ETHBTC_1MinuteBars.csv'
@@ -235,7 +279,7 @@ data = bt.feeds.GenericCSVData(dataname=dataname,
 #cerebro.adddata(data)
 cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
 
-cerebro.addstrategy(SuperTrendStrategy)
+cerebro.addstrategy(SuperTrendStrategy, side='long', strendmult=3)
 
 # Run over everything
 #cerebro.run()
