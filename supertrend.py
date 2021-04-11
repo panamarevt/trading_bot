@@ -1,0 +1,283 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Apr 10 16:29:11 2021
+
+@author: Taras
+"""
+
+import numpy as np
+import backtrader as bt
+import backtrader.indicators as btind
+import datetime
+
+# Make it possible to buy fractional sizes of shares (in our case cryptocurrencies)
+class BitmexComissionInfo(bt.CommissionInfo):
+    params = (
+        ("commission", 0.075),
+        ("mult", 1.0),
+        ("margin", None),
+        ("commtype", None),
+        ("stocklike", False),
+        ("percabs", False),
+        ("interest", 0.0),
+        ("interest_long", False),
+        ("leverage", 1.0),
+        ("automargin", False),
+    )
+    def getsize(self, price, cash):
+        """Returns fractional size for cash operation @price"""
+        return self.p.leverage * (cash / price)
+
+# Define SuperTrend indicator
+#class SuperTrend(bt.Indicator):
+#
+#    lines = ('top', 'bot')
+#    params = (
+#            ('period', 10),
+#            ('mult', 3), 
+#    )
+#    plotinfo = dict(subplot=False)
+#
+#    def __init__(self):
+#        
+#        atr = btind.ATR(self.data, period=self.p.period)
+#
+#        self.lines.top = (self.data.high + self.data.low) / 2.0 + self.p.mult * atr
+#        self.lines.bot = (self.data.high + self.data.low) / 2.0 - self.p.mult * atr
+
+
+# SuperTrend indicators taken from: 
+# https://github.com/mementum/backtrader/pull/374/files
+class SuperTrendBand(bt.Indicator):
+    """
+    Helper inidcator for Supertrend indicator
+    
+    """
+    params = (('period',10),('multiplier',3))
+    lines = ('basic_ub','basic_lb','final_ub','final_lb')
+    plotinfo = dict(subplot=False)
+
+    def __init__(self):
+        self.atr = bt.indicators.AverageTrueRange(period=self.p.period)
+        self.l.basic_ub = ((self.data.high + self.data.low) / 2) + (self.atr * self.p.multiplier)
+        self.l.basic_lb = ((self.data.high + self.data.low) / 2) - (self.atr * self.p.multiplier)
+
+    def next(self):
+        if len(self)-1 == self.p.period:
+            self.l.final_ub[0] = self.l.basic_ub[0]
+            self.l.final_lb[0] = self.l.basic_lb[0]
+        else:
+            #=IF(OR(basic_ub<final_ub*,close*>final_ub*),basic_ub,final_ub*)
+            if self.l.basic_ub[0] < self.l.final_ub[-1] or self.data.close[-1] > self.l.final_ub[-1]:
+                self.l.final_ub[0] = self.l.basic_ub[0]
+            else:
+                self.l.final_ub[0] = self.l.final_ub[-1]
+
+            #=IF(OR(baisc_lb > final_lb *, close * < final_lb *), basic_lb *, final_lb *)
+            if self.l.basic_lb[0] > self.l.final_lb[-1] or self.data.close[-1] < self.l.final_lb[-1]:
+                self.l.final_lb[0] = self.l.basic_lb[0]
+            else:
+                self.l.final_lb[0] = self.l.final_lb[-1]
+
+
+class SuperTrend(bt.Indicator):
+    """
+    Super Trend indicator
+    """
+    params = (('period', 10), ('multiplier', 3))
+    lines = ('super_trend',)
+    plotinfo = dict(subplot=False)
+
+    def __init__(self):
+        self.stb = SuperTrendBand(period = self.p.period, multiplier = self.p.multiplier)
+
+    def next(self):
+        if len(self) - 1 == self.p.period:
+            self.l.super_trend[0] = self.stb.final_ub[0]
+            return
+
+        if self.l.super_trend[-1] == self.stb.final_ub[-1]:
+            if self.data.close[0] <= self.stb.final_ub[0]:
+                self.l.super_trend[0] = self.stb.final_ub[0]
+            else:
+                self.l.super_trend[0] = self.stb.final_lb[0]
+
+        if self.l.super_trend[-1] == self.stb.final_lb[-1]:
+            if self.data.close[0] >= self.stb.final_lb[0]:
+                self.l.super_trend[0] = self.stb.final_lb[0]
+            else:
+                self.l.super_trend[0] = self.stb.final_ub[0]        
+ 
+
+       
+class SuperTrendStrategy(bt.Strategy):    
+    params = (('strendperiod', 10),
+              ('strendmult', 3),
+              ('take_profit', 0.015),
+              ('stop_loss', 0.03)
+              )
+
+    def __init__(self):
+        # Keep a reference to the "close" line in the data[0] dataseries
+        self.op = self.datas[0].open
+        self.cl = self.datas[0].close
+        self.hi = self.datas[0].high
+        self.lo = self.datas[0].low
+        
+        #self.supertrend_band = SuperTrendBand(self.data, period=self.p.strendperiod, multiplier=self.p.strendmult)
+        self.supertrend = SuperTrend(self.data, period=self.p.strendperiod, multiplier=self.p.strendmult)
+        
+        self.uptrend = self.op > self.supertrend.lines.super_trend
+        
+        self.profit_target = None
+        self.loss_target = None
+
+
+    def log(self, txt, dt=None):
+        ''' Logging function fot this strategy'''
+        dt = dt or self.datas[0].datetime.datetime(0)
+        print('%s, %s' % (dt.strftime("%d %b %Y %H:%M:%S"), txt))        
+
+    def notify_order(self, order):
+        if order.status in [order.Submitted, order.Accepted]:
+            # Buy/Sell order submitted/accepted to/by broker - Nothing to do
+            return
+
+        # Check if an order has been completed
+        # Attention: broker could reject order if not enough cash
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                self.log(
+                    'BUY EXECUTED, Price: %.2f, Cost: %.2f, Comm %.5f' %
+                    (order.executed.price,
+                     order.executed.value,
+                     order.executed.comm))
+
+                self.buyprice = order.executed.price
+                self.buycomm = order.executed.comm
+                #self.total_comm += self.buycomm
+            else:  # Sell
+                self.log('SELL EXECUTED, Price: %.2f, Cost: %.2f, Comm %.5f' %
+                         (order.executed.price,
+                          order.executed.value,
+                          order.executed.comm))
+
+            self.bar_executed = len(self)
+
+        elif order.status in [order.Canceled, order.Rejected]:
+            #print(order.status)
+            self.log('Order Canceled/Rejected')
+        elif order.status in [order.Margin]:
+            self.log('Order Margin')
+
+        self.order = None
+        
+    def notify_trade(self, trade):
+        if not trade.isclosed:
+            return
+
+        self.log('OPERATION PROFIT, GROSS %.2f, NET %.2f' %
+                 (trade.pnl, trade.pnlcomm))
+
+    def trend_signal(self, cond='touch'):
+        if cond == 'touch':
+            signal = self.lo < self.supertrend.l.super_trend and self.cl > self.supertrend.l.super_trend
+        if cond == 'green':
+            signal = (self.lo[-1] < self.supertrend.l.super_trend[-1] and self.cl[-1] > self.supertrend.l.super_trend[-1]) \
+                and (self.cl > self.op and self.cl > self.supertrend.l.super_trend)
+        return signal
+        
+        
+    def next(self):
+        if not self.position:
+            if self.uptrend:
+                #if self.lo < self.supertrend.l.super_trend and self.cl > self.supertrend.l.super_trend :
+#                if self.lo[-1] < self.supertrend.l.super_trend[-1] and self.cl[-1] > self.supertrend.l.super_trend[-1] :
+#                    if self.cl > self.op and self.cl > self.supertrend.l.super_trend:
+             if self.trend_signal(cond='touch'):
+                    self.log(f"Prince signal!  Buy at {self.cl[0]}")
+                    self.profit_target = (1+self.p.take_profit)*self.cl[0] 
+                    self.loss_target = (1-self.p.stop_loss)*self.cl[0]
+                    self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
+                    self.buy(size=self.size, exectype=bt.Order.Market)
+                    
+                             
+        else:
+            if (self.cl[0] > self.profit_target):  
+                self.log(f"PROFIT! {self.cl[0]}")   
+                self.close()
+                self.profit_target = None
+            if (self.cl[0] <= self.loss_target): 
+                self.log(f"LOSS! {self.cl[0]}")   
+                self.close()
+                self.loss_target = None      
+
+
+cerebro = bt.Cerebro()
+
+fromdate = datetime.datetime.strptime('2021-01-01', '%Y-%m-%d')
+todate = datetime.datetime.strptime('2021-04-11', '%Y-%m-%d')
+
+cerebro.broker.set_cash(1000)
+
+#symbol = 'BTCUSDT'
+#symbol = 'BNBBTC'
+symbol = 'LINKUSDT'
+#    symbol = 'ETHUSDT'
+dataname = f'{symbol.upper()}_1MinuteBars.csv'
+#dataname = 'BQXBTC_1MinuteBars.csv'
+#dataname = 'ETHBTC_1MinuteBars.csv'
+
+data = bt.feeds.GenericCSVData(dataname=dataname,  
+                               timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
+
+ 
+#cerebro.adddata(data)
+cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
+
+cerebro.addstrategy(SuperTrendStrategy)
+
+# Run over everything
+#cerebro.run()
+
+cerebro.broker.addcommissioninfo(BitmexComissionInfo())
+
+# Analyzers:
+cerebro.addanalyzer(
+    bt.analyzers.SQN, _name="sqn")
+
+cerebro.addanalyzer(
+    bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Months
+)
+# Statistics for periods
+cerebro.addanalyzer(
+    bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
+)
+# All-time ROI
+cerebro.addanalyzer(
+    bt.analyzers.TimeReturn, _name="alltime_roi", timeframe=bt.TimeFrame.NoTimeFrame
+)
+# Return on buy-and-hold strategy
+cerebro.addanalyzer(
+    bt.analyzers.TimeReturn,
+    data=data,
+    _name="benchmark",
+    timeframe=bt.TimeFrame.NoTimeFrame,
+)
+
+
+print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+#
+
+results = cerebro.run()
+
+print('----------------------------------------------------------------------------')
+print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+
+st0 = results[0]
+
+for alyzer in st0.analyzers:
+    alyzer.print()
+
+# Plot the result
+#cerebro.plot(style='candlestick')
