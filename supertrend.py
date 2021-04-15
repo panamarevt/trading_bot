@@ -114,7 +114,9 @@ class SuperTrendStrategy(bt.Strategy):
     params = (('strendperiod', 10),
               ('strendmult', 3),
               ('take_profit', 0.016),
+              ('atr_fac_prof', 1.0),
               ('stop_loss', 0.03),
+              ('atr_fac_loss', 1.0),
               ('side', 'long'),
               )
 
@@ -216,8 +218,14 @@ class SuperTrendStrategy(bt.Strategy):
                 signal_long = self.trend_signal(cond='touch', side='long')
                 if signal_long:
                         self.log(f"Price signal!  Buy at {self.cl[0]}")
-                        self.profit_target = (1+self.p.take_profit)*self.cl[0] 
-                        self.loss_target = (1-self.p.stop_loss)*self.cl[0]
+                        if type(self.p.take_profit) != 'str' : # if take profit is a fixed number, just use it as %
+                            self.profit_target = (1+self.p.take_profit)*self.cl[0]
+                        else: # if profit depends on ATR:
+                            self.profit_target = self.cl[0] + self.p.atr_fac_prof*self.atr
+                        if type(self.p.stop_loss) != 'str' :
+                            self.loss_target = (1-self.p.stop_loss)*self.cl[0]
+                        else:
+                            self.loss_target = self.cl[0] - self.p.atr_fac_loss*self.atr
                         self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
                         self.buy(size=self.size, exectype=bt.Order.Market)
                         self.trade_type = 'long'
@@ -226,8 +234,14 @@ class SuperTrendStrategy(bt.Strategy):
                 signal_short = self.trend_signal(cond='touch', side='short')
                 if signal_short:
                         self.log(f"Price signal!  Sell at {self.cl[0]}")
-                        self.profit_target = (1-self.p.take_profit)*self.cl[0] 
-                        self.loss_target = (1+self.p.stop_loss)*self.cl[0]
+                        if type(self.p.take_profit) != 'str' : # if take profit is a fixed number, just use it as %
+                            self.profit_target = (1-self.p.take_profit)*self.cl[0]                        
+                        else:
+                            self.profit_target = self.cl[0] - self.p.atr_fac_prof*self.atr
+                        if type(self.p.stop_loss) != 'str' :
+                            self.loss_target = (1+self.p.stop_loss)*self.cl[0]
+                        else:
+                            self.loss_target = self.cl[0] + self.p.atr_fac_loss*self.atr
                         self.size = 0.99*self.broker.get_cash() / self.cl[0] # mult. by 0.99 to save for commission
                         self.sell(size=self.size, exectype=bt.Order.Market)
                         self.trade_type = 'short'
@@ -238,7 +252,7 @@ class SuperTrendStrategy(bt.Strategy):
                     self.log(f"PROFIT! {self.cl[0]}")   
                     self.close()
                     self.profit_target = None
-                if (self.cl[0] <= self.loss_target): 
+                elif (self.cl[0] <= self.loss_target): 
                     self.log(f"LOSS! {self.cl[0]}")   
                     self.close()
                     self.loss_target = None      
@@ -247,27 +261,30 @@ class SuperTrendStrategy(bt.Strategy):
                     self.log(f"PROFIT! {self.cl[0]}")   
                     self.close()
                     self.profit_target = None
-                if (self.cl[0] >= self.loss_target): 
+                elif (self.cl[0] >= self.loss_target): 
                     self.log(f"LOSS! {self.cl[0]}")   
                     self.close()
                     self.loss_target = None                 
 
 cerebro = bt.Cerebro()
 
-fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
+fromdate = datetime.datetime.strptime('2021-02-01', '%Y-%m-%d')
 todate = datetime.datetime.strptime('2021-04-12', '%Y-%m-%d')
 
 cerebro.broker.set_cash(1000)
 
-symbol = 'BTCUSDT'
+#symbol = 'BTCUSDT'
 #symbol = 'BNBBTC'
+#symbol = 'ETHBTC'
 #symbol = 'BNBETH'
 #symbol = 'LINKETH'
 #symbol = 'BNBUSDT'
 #symbol = 'ETHUSDT'
-#symbol = 'AAVEBTC'
+symbol = 'AAVEBTC'
 #symbol = 'ADABNB'
 #symbol = 'CAKEBNB'
+#symbol = 'DOTBNB'
+
 dataname = f'{symbol.upper()}_1MinuteBars.csv'
 #dataname = 'BQXBTC_1MinuteBars.csv'
 #dataname = 'ETHBTC_1MinuteBars.csv'
@@ -277,9 +294,9 @@ data = bt.feeds.GenericCSVData(dataname=dataname,
 
  
 #cerebro.adddata(data)
-cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=60)
+cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=15)
 
-cerebro.addstrategy(SuperTrendStrategy, side='long', strendmult=3)
+cerebro.addstrategy(SuperTrendStrategy, side='short', strendmult=2, take_profit = 0.03, stop_loss = 100, atr_fac_prof = 1.5, atr_fac_loss = 1)
 
 # Run over everything
 #cerebro.run()
