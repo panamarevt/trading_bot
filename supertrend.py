@@ -10,6 +10,8 @@ import backtrader as bt
 import backtrader.indicators as btind
 import datetime
 
+import time
+
 # Make it possible to buy fractional sizes of shares (in our case cryptocurrencies)
 class BitmexComissionInfo(bt.CommissionInfo):
     params = (
@@ -266,79 +268,146 @@ class SuperTrendStrategy(bt.Strategy):
                     self.close()
                     self.loss_target = None                 
 
-cerebro = bt.Cerebro()
 
-fromdate = datetime.datetime.strptime('2021-02-01', '%Y-%m-%d')
-todate = datetime.datetime.strptime('2021-04-12', '%Y-%m-%d')
+def run(symbol, interval, side='long', strendmult=3, take_profit=0.015, stop_loss=0.03,
+        atr_fac_prof=1.5, atr_fac_loss=1.5):
+    
+    print("<-!->")
+    print("Starting new strategy...")
+    print('Parameters:')
+    print(f'symbol:{symbol}')
+    print(f'interval:{interval}')
+    print(f'side:{side}')
+    print(f'strendmult:{strendmult}')
+    print(f'take_profit:{take_profit}')
+    print(f'stop_loss:{stop_loss}')
+    print(f'atr_fac_prof:{atr_fac_prof}')
+    print(f'atr_fac_loss:{atr_fac_loss}')
+    
+    cerebro = bt.Cerebro()
+    
+    fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
+    todate = datetime.datetime.strptime('2021-04-12', '%Y-%m-%d')
+    
+    cerebro.broker.set_cash(1000)
+    
+    #symbol = 'BTCUSDT'
+    #symbol = 'BNBBTC'
+    #symbol = 'ETHBTC'
+    #symbol = 'BNBETH'
+    #symbol = 'LINKETH'
+    #symbol = 'BNBUSDT'
+    #symbol = 'ETHUSDT'
+    #symbol = 'AAVEBTC'
+    #symbol = 'ADABNB'
+    #symbol = 'CAKEBNB'
+    #symbol = 'DOTBNB'
+    
+    dataname = f'{symbol.upper()}_1MinuteBars.csv'
+    #dataname = 'BQXBTC_1MinuteBars.csv'
+    #dataname = 'ETHBTC_1MinuteBars.csv'
+    
+    data = bt.feeds.GenericCSVData(dataname=dataname,  
+                                   timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
+    
+     
+    #cerebro.adddata(data)
+    cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=interval)
+    
+    #cerebro.addstrategy(SuperTrendStrategy, side='short', strendmult=2, take_profit = 0.03, stop_loss = 100, atr_fac_prof = 1.5, atr_fac_loss = 1)
+    cerebro.addstrategy(SuperTrendStrategy, side=side, strendmult=strendmult, take_profit = take_profit, 
+                        stop_loss = stop_loss, atr_fac_prof = atr_fac_prof, atr_fac_loss = atr_fac_loss)
+    # Run over everything
+    #cerebro.run()
+    
+    cerebro.broker.addcommissioninfo(BitmexComissionInfo())
+    
+    # Analyzers:
+    cerebro.addanalyzer(
+        bt.analyzers.SQN, _name="sqn")
+    
+    cerebro.addanalyzer(
+        bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Months
+    )
+    # Statistics for periods
+    cerebro.addanalyzer(
+        bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
+    )
+    # All-time ROI
+    cerebro.addanalyzer(
+        bt.analyzers.TimeReturn, _name="alltime_roi", timeframe=bt.TimeFrame.NoTimeFrame
+    )
+    # Return on buy-and-hold strategy
+    cerebro.addanalyzer(
+        bt.analyzers.TimeReturn,
+        data=data,
+        _name="benchmark",
+        timeframe=bt.TimeFrame.NoTimeFrame,
+    )
+    
+    
+    print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+    #
+    
+    results = cerebro.run()
+    
+    print('----------------------------------------------------------------------------')
+    print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+    
+    st0 = results[0]
+    
+    for alyzer in st0.analyzers:
+        alyzer.print()
+    
+    # Plot the result
+    #cerebro.plot(style='candlestick')
 
-cerebro.broker.set_cash(1000)
 
-#symbol = 'BTCUSDT'
-#symbol = 'BNBBTC'
-#symbol = 'ETHBTC'
-#symbol = 'BNBETH'
-#symbol = 'LINKETH'
-#symbol = 'BNBUSDT'
-#symbol = 'ETHUSDT'
-symbol = 'AAVEBTC'
-#symbol = 'ADABNB'
-#symbol = 'CAKEBNB'
-#symbol = 'DOTBNB'
-
-dataname = f'{symbol.upper()}_1MinuteBars.csv'
-#dataname = 'BQXBTC_1MinuteBars.csv'
-#dataname = 'ETHBTC_1MinuteBars.csv'
-
-data = bt.feeds.GenericCSVData(dataname=dataname,  
-                               timeframe=bt.TimeFrame.Minutes, compression=1, fromdate=fromdate, todate=todate)
-
- 
-#cerebro.adddata(data)
-cerebro.resampledata(data, timeframe = bt.TimeFrame.Minutes, compression=15)
-
-cerebro.addstrategy(SuperTrendStrategy, side='short', strendmult=2, take_profit = 0.03, stop_loss = 100, atr_fac_prof = 1.5, atr_fac_loss = 1)
-
-# Run over everything
-#cerebro.run()
-
-cerebro.broker.addcommissioninfo(BitmexComissionInfo())
-
-# Analyzers:
-cerebro.addanalyzer(
-    bt.analyzers.SQN, _name="sqn")
-
-cerebro.addanalyzer(
-    bt.analyzers.TimeReturn, _name="daily_roi", timeframe=bt.TimeFrame.Months
-)
-# Statistics for periods
-cerebro.addanalyzer(
-    bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
-)
-# All-time ROI
-cerebro.addanalyzer(
-    bt.analyzers.TimeReturn, _name="alltime_roi", timeframe=bt.TimeFrame.NoTimeFrame
-)
-# Return on buy-and-hold strategy
-cerebro.addanalyzer(
-    bt.analyzers.TimeReturn,
-    data=data,
-    _name="benchmark",
-    timeframe=bt.TimeFrame.NoTimeFrame,
-)
-
-
-print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
-#
-
-results = cerebro.run()
-
-print('----------------------------------------------------------------------------')
-print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
-
-st0 = results[0]
-
-for alyzer in st0.analyzers:
-    alyzer.print()
-
-# Plot the result
-#cerebro.plot(style='candlestick')
+if __name__=='__main__':
+    
+    symbols = [f'{item}USDT' for item in ['BTC', 'ETH', 'BNB'] ]
+    symbols += [f'{item}ETH' for item in ['BNB', 'ADA', 'LINK', 'AAVE'] ]
+    symbols += [f'{item}BNB' for item in ['AAVE', 'DOT', 'ADA', 'BAND', 'CAKE'] ]
+    symbols += [f'{item}BTC' for item in ['ETH', 'BNB', 'ADA', 'DOT', 'AAVE', 'LINK', 'BAND', 'CAKE'] ]
+    
+    intervals = [15,30,60]
+    mults = [2,3]
+    profits = [0.015, 0.03, 0.05, 0.1, 'atr']
+    losses = [0.015, 0.03, 0.05, 100, 'atr']
+    atr_profits = [1, 2]
+    atr_losses = [1, 2]
+    sides = ['long','short','both']
+    
+    count = 0
+    t_start = time.time()
+    #Here comes our UGLY loop :-)
+    for symbol in symbols:
+        for interval in intervals:
+            for mult in mults:
+                for prof in profits:
+                    for loss in losses:
+                        for side in sides:
+                            if prof == 'atr' or loss == 'atr':
+                                for atr_prof in atr_profits:
+                                    for atr_loss in atr_losses:
+                                        count += 1
+                                        print(f'###{count}###')
+                                        run(symbol,interval,side=side,strendmult=mult,take_profit=prof,stop_loss=loss,
+                                            atr_fac_profit=atr_prof,atr_fac_loss=atr_loss)
+                            else:
+                                count += 1
+                                print(f'###{count}###')
+                                run(symbol,interval,side=side,strendmult=mult,take_profit=prof,stop_loss=loss)
+                                t_1st_loop = time.time() - t_start
+                                print(f'Time taken for 1 loop (s): {t_1st_loop}')
+        t_1st_symbol = time.time() - t_start
+        print(f'Time taken for 1 symbol (min): {t_1st_symbol/60}')
+    #Run the whole thing
+    t_tot = time.time() - t_start  
+    print(f'Total number of combinations: {count}')
+    print(f'Total time taken (hr): {t_tot/3600}')
+    
+    
+    
+    
+    
