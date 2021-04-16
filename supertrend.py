@@ -220,11 +220,13 @@ class SuperTrendStrategy(bt.Strategy):
                 signal_long = self.trend_signal(cond='touch', side='long')
                 if signal_long:
                         self.log(f"Price signal!  Buy at {self.cl[0]}")
-                        if type(self.p.take_profit) != 'str' : # if take profit is a fixed number, just use it as %
+                        if self.p.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
+                            print(self.p.take_profit)
+                            print(type(self.p.take_profit))
                             self.profit_target = (1+self.p.take_profit)*self.cl[0]
                         else: # if profit depends on ATR:
                             self.profit_target = self.cl[0] + self.p.atr_fac_prof*self.atr
-                        if type(self.p.stop_loss) != 'str' :
+                        if self.p.stop_loss != 'atr' :
                             self.loss_target = (1-self.p.stop_loss)*self.cl[0]
                         else:
                             self.loss_target = self.cl[0] - self.p.atr_fac_loss*self.atr
@@ -236,11 +238,11 @@ class SuperTrendStrategy(bt.Strategy):
                 signal_short = self.trend_signal(cond='touch', side='short')
                 if signal_short:
                         self.log(f"Price signal!  Sell at {self.cl[0]}")
-                        if type(self.p.take_profit) != 'str' : # if take profit is a fixed number, just use it as %
+                        if self.p.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1-self.p.take_profit)*self.cl[0]                        
                         else:
                             self.profit_target = self.cl[0] - self.p.atr_fac_prof*self.atr
-                        if type(self.p.stop_loss) != 'str' :
+                        if self.p.stop_loss != 'atr' :
                             self.loss_target = (1+self.p.stop_loss)*self.cl[0]
                         else:
                             self.loss_target = self.cl[0] + self.p.atr_fac_loss*self.atr
@@ -393,7 +395,7 @@ if __name__=='__main__':
                                         count += 1
                                         print(f'###{count}###')
                                         run(symbol,interval,side=side,strendmult=mult,take_profit=prof,stop_loss=loss,
-                                            atr_fac_profit=atr_prof,atr_fac_loss=atr_loss)
+                                            atr_fac_prof=atr_prof,atr_fac_loss=atr_loss)
                             else:
                                 count += 1
                                 print(f'###{count}###')
