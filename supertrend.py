@@ -288,7 +288,7 @@ def run(symbol, interval, side='long', strendmult=3, take_profit=0.015, stop_los
     
     cerebro = bt.Cerebro()
     
-    fromdate = datetime.datetime.strptime('2020-01-01', '%Y-%m-%d')
+    fromdate = datetime.datetime.strptime('2021-01-01', '%Y-%m-%d')
     todate = datetime.datetime.strptime('2021-04-12', '%Y-%m-%d')
     
     cerebro.broker.set_cash(1000)
@@ -333,7 +333,7 @@ def run(symbol, interval, side='long', strendmult=3, take_profit=0.015, stop_los
     )
     # Statistics for periods
     cerebro.addanalyzer(
-        bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Days
+        bt.analyzers.PeriodStats, _name="period", timeframe=bt.TimeFrame.Months
     )
     # All-time ROI
     cerebro.addanalyzer(
@@ -362,24 +362,9 @@ def run(symbol, interval, side='long', strendmult=3, take_profit=0.015, stop_los
         alyzer.print()
     
     # Plot the result
-    #cerebro.plot(style='candlestick')
+    cerebro.plot(style='candlestick')
 
-
-if __name__=='__main__':
-    
-    symbols = [f'{item}USDT' for item in ['BTC', 'ETH', 'BNB'] ]
-    symbols += [f'{item}ETH' for item in ['BNB', 'ADA', 'LINK', 'AAVE'] ]
-    symbols += [f'{item}BNB' for item in ['AAVE', 'DOT', 'ADA', 'BAND', 'CAKE'] ]
-    symbols += [f'{item}BTC' for item in ['ETH', 'BNB', 'ADA', 'DOT', 'AAVE', 'LINK', 'BAND', 'CAKE'] ]
-    
-    intervals = [15,30,60]
-    mults = [2,3]
-    profits = [0.015, 0.03, 0.05, 0.1, 'atr']
-    losses = [0.015, 0.03, 0.05, 100, 'atr']
-    atr_profits = [1, 2]
-    atr_losses = [1, 2]
-    sides = ['long','short','both']
-    
+def run_multitest(symbols, intervals, sides, mults, profilts, losses, atr_profits, atr_losses):
     count = 0
     t_start = time.time()
     #Here comes our UGLY loop :-)
@@ -407,9 +392,31 @@ if __name__=='__main__':
     #Run the whole thing
     t_tot = time.time() - t_start  
     print(f'Total number of combinations: {count}')
-    print(f'Total time taken (hr): {t_tot/3600}')
+    print(f'Total time taken (hr): {t_tot/3600}')    
+
+
+if __name__=='__main__':
     
+    symbols = [f'{item}USDT' for item in ['BTC', 'ETH', 'BNB'] ]
+    symbols += [f'{item}ETH' for item in ['BNB', 'ADA', 'LINK', 'AAVE'] ]
+    symbols += [f'{item}BNB' for item in ['AAVE', 'DOT', 'ADA', 'BAND', 'CAKE'] ]
+    symbols += [f'{item}BTC' for item in ['ETH', 'BNB', 'ADA', 'DOT', 'AAVE', 'LINK', 'BAND', 'CAKE'] ]
     
+    intervals = [15,30,60]
+    mults = [2,3]
+    profits = [0.015, 0.03, 0.05, 0.1, 'atr']
+    losses = [0.015, 0.03, 0.05, 100, 'atr']
+    atr_profits = [1, 2]
+    atr_losses = [1, 2]
+    sides = ['long','short','both']
     
+    #run_multitest(symbols, intervals, sides, mults, profits, losses, atr_profits, atr_losses)
+#    
+
+    
+    #run('DOTBTC', 15, side='both', strendmult=2, take_profit=0.05, stop_loss=100)
+    #run('BANDBNB', 30, side='both', strendmult=2, take_profit=0.1, stop_loss=100, atr_fac_prof=1, atr_fac_loss=1)
+    #run('LINKETH', 30, side='both', strendmult=2, take_profit=0.05, stop_loss=100, atr_fac_prof=1, atr_fac_loss=2)
+    run('ETHUSDT', 15, side='long', strendmult=2, take_profit=0.05, stop_loss=0.05, atr_fac_prof=1, atr_fac_loss=2)
     
     
