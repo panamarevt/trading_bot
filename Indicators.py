@@ -10,6 +10,7 @@ import numpy as np
 # https://technical-analysis-library-in-python.readthedocs.io/en/latest/
 # https://github.com/bukosabino/ta
 import ta
+import pandas_ta as pd_ta
 
 def get_BBands(close):
     '''Compute Bollinger Bands'''
@@ -60,6 +61,40 @@ def check_stochRSI_signal(fastk, slowd, kmin=10, kmax=30):
 def EMA(close, period):
     '''Returns EMA of given period by accessing EMA from TA library'''
     return ta.trend.ema(close, period)
+
+def supertrend_signal(op, hi, lo, cl, period, mult, cond='touch', side='long'):
+    '''Check if there is a BUY/SELL signal for a SuperTrend strategy
+    returns True if the signal conditions are met, otherwise False.
+    ------------------------
+    parameters:
+    op,hi,lo,cl : (pd.Series) - open, high, low and close prices
+    period : (int) - time period to compute average true range in the supertrend indicator
+    mult : (float, but usually an integer) - multiplier to use in the computation for the supertrend indicator     
+    cond - condition for the signal 
+         = 'touch' - if last candle touched supertrend line, buy on open of current candle
+         = 'green' - current candle closed green (red for short) after supertrend line, previous candle touched the supertrend line
+    side - long or short strategy
+         = 'long' - to check for LONG signal
+         = 'short' to check for SHORT signal'''
+    super_trend = pd_ta.supertrend(hi,lo,cl,period,mult)
+    uptrend = super_trend.iloc[-1,1] == 1 # Second column (1) shows the trend direction: 1 - uptrend, -1 - downtrend
+    super_trend = super_trend.iloc[-1,0] # take only the latest (current) value; first (0) column is the numerical value of the trend      
+    print(f"SuperTrend value: {super_trend}, uptrend: {uptrend}")
+    signal = False
+    if cond == 'touch':
+        if (side=='long') and uptrend:
+            signal = lo.iloc[-1] < super_trend and cl.iloc[-1] > super_trend
+        if (side=='short') and (not uptrend):
+            signal = hi.iloc[-1] > super_trend and cl.iloc[-1] < super_trend
+    if cond == 'green':
+        if (side=='long') and uptrend:
+            signal = (lo.iloc[-1] < super_trend and cl.iloc[-1] > super_trend) \
+                and (cl.iloc[-1] > op.iloc[-1] and cl.iloc[-1] > super_trend)
+        if (side=='short') and (not uptrend):
+            signal = (hi.iloc[-1] > super_trend and cl.iloc[-1] < super_trend) \
+                and (cl.iloc[-1] < op.iloc[-1] and cl.iloc[-1] < super_trend)                
+    return signal
+
 
 ##### Candle patterns:
 
