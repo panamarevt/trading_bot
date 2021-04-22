@@ -12,6 +12,8 @@ import numpy as np
 import ta
 import pandas_ta as pd_ta
 
+from loguru import logger
+
 def get_BBands(close):
     '''Compute Bollinger Bands'''
     # Create instance of the class
@@ -79,7 +81,8 @@ def supertrend_signal(op, hi, lo, cl, period, mult, cond='touch', side='long'):
     super_trend = pd_ta.supertrend(hi,lo,cl,period,mult)
     uptrend = super_trend.iloc[-1,1] == 1 # Second column (1) shows the trend direction: 1 - uptrend, -1 - downtrend
     super_trend = super_trend.iloc[-1,0] # take only the latest (current) value; first (0) column is the numerical value of the trend      
-    print(f"SuperTrend value: {super_trend}, uptrend: {uptrend}")
+    #print(f"SuperTrend value: {super_trend}, uptrend: {uptrend}")
+    logger.debug((f"SuperTrend value: {super_trend}, uptrend: {uptrend}"))
     signal = False
     if cond == 'touch':
         if (side=='long') and uptrend:
