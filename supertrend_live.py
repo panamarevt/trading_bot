@@ -60,11 +60,11 @@ class SuperTrendStrategy():
         self.price_prec = binance_endpoints.get_price_precision(self.symbol)
         self.lot_prec = binance_endpoints.get_lot_precision(self.symbol)
     
-        self.new_order
+        self.new_order = False
         self.profit_order = False
     
     def log(self, txt, dt=None, fname=None):
-        ''' Logging function fot this strategy'''
+        ''' Logging function for this strategy'''
         dt = dt or datetime.datetime.now()
         print('%s, %s' % (dt.strftime("%d %b %Y %H:%M:%S"), txt))           
         fname = fname or self.logfile
@@ -100,7 +100,7 @@ class SuperTrendStrategy():
         return self.new_order
 
     def check_position(self):
-        logger.debug("Check ENTRY Order status...")
+        logger.info("Check ENTRY Order status...")
         self.new_order_status = binance_endpoints.check_order_status(self.new_order)['status']
         if (self.new_order_status == 'FILLED') and (not self.profit_order):
             logger.info("ENTRY order FILLED")
@@ -114,7 +114,7 @@ class SuperTrendStrategy():
                 self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
         if (self.new_order_status != 'FILLED'):
             #self.log(f"New order status: {self.new_order_status}")
-            logger.debug(f"ENTRY order status: {self.new_order_status}")
+            logger.info(f"ENTRY order status: {self.new_order_status}")
         if self.profit_order:
             self.prof_order_status = binance_endpoints.check_order_status(self.profit_order)['status']
             if self.prof_order_status == 'FILLED':
@@ -124,7 +124,7 @@ class SuperTrendStrategy():
                 self.profit_order = False
             else:
                 #self.log(f"Exit order status: {self.prof_order_status}")
-                logger.debug(f"Exit order status: {self.prof_order_status}")
+                logger.info(f"Exit order status: {self.prof_order_status}")
 
     @logger.catch
     def next(self, op, hi, lo, cl, op_time):      
@@ -189,51 +189,13 @@ class SuperTrendStrategy():
                             pass
                         #----------------------
                         #place sell order here
-                        self.place_buy_order()
+                        self.place_sell_order()
                              
         else:
             self.check_position()
             #            self.new_order_status = binance_endpoints.check_order_status(self.new_order)['status']
-#            if (self.new_order_status == 'FILLED') and (not self.profit_order):
-#                if self.trade_type == 'long':
-#                    SellPrice = f'{self.profit_target:{self.price_prec}.f}'
-#                    self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
-#                if self.trade_type == 'short':
-#                    BuyPrice = f'{self.profit_target:{self.price_prec}.f}'
-#                    self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
-#            if (self.new_order_status != 'FILLED'):
-#                self.log(f"New order status: {self.new_order_status}")
-#            if self.profit_order:
-#                self.prof_order_status = binance_endpoints.check_order_status(self.profit_order)['status']
-#                if self.prof_order_status == 'FILLED':
-#                    self.log("Profit!")
-#                    self.position = False
-#                    self.profit_order = False
-#                else:
-#                    self.log(f"Exit order status: {self.prof_order_status}")
-            
-            
-#            if self.trade_type == 'long': # if we are in a `long` position
-#                if (self.cl[0] > self.profit_target):  
-#                    self.log(f"PROFIT! {self.cl[0]}")   
-#                    self.close()
-#                    self.profit_target = None
-#                elif (self.cl[0] <= self.loss_target): 
-#                    self.log(f"LOSS! {self.cl[0]}")   
-#                    self.close()
-#                    self.loss_target = None      
-#            if self.trade_type == 'short': # if we are in a `short` position
-#                if (self.cl[0] < self.profit_target):  
-#                    self.log(f"PROFIT! {self.cl[0]}")   
-#                    self.close()
-#                    self.profit_target = None
-#                elif (self.cl[0] >= self.loss_target): 
-#                    self.log(f"LOSS! {self.cl[0]}")   
-#                    self.close()
-#                    self.loss_target = None            
-        
 
-#indicators.supertrend_signal(Strategy.op,Strategy.hi,Strategy.lo,Strategy.cl,Strategy.strendperiod, Strategy.strendmult, cond='touch', side='long')
+
 
 def on_message(ws, message):
     global closes, opens, highs, lows, count
@@ -318,29 +280,88 @@ def starting_summary(args):
         print(f"{var}: {vars(args)[var]}")
  
 
+
+def parse_args():
+    ''' Main parameters of the strategy:
+    '''
+    parser = argparse.ArgumentParser(
+        description='SuperTrend Strategy',
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    parser.add_argument(
+        '--symbol', '-s',
+        default='btcusdt',
+        help='Trading symbol, str, e.g.: btcusdt')
+
+    parser.add_argument(
+        '--interval', '-i',
+        default=15, type=int,
+        help='Period interval to trade on, in minutes. Accepted values:1,3,5,15,30,60')
+
+    parser.add_argument(
+        '--period', '-p',
+        default=10, type=float,
+        help='Period to compute ATR for SuperTrend ')    
+    
+    parser.add_argument(
+        '--mult', '-m',
+        default=3, type=float,
+        help='Factor to multiply ATR')
+
+    parser.add_argument(
+        '--side', 
+        default='long', type=str,
+        help='Accepted values: long, short, both')
+
+    parser.add_argument(
+        '--cashbuy', 
+        default=1000, type=float,
+        help='Amount of cash for LONG trades, in units of base asset')
+
+    parser.add_argument(
+        '--cashsell', 
+        default=1000, type=float,
+        help='Amount of cash for SHORT trades, in units of quote asset')
+
+    parser.add_argument(
+        '--log', '-l',
+        default=None,
+        help='Filename to save logging data. If None the default filename is used: {symbol}_{interval}.log')         
+
+    return parser.parse_args()
+
 #---------------------------------------------------------------
        
 if __name__=='__main__':
     
     #Get Args
-#    args = parse_args()
-#    
-#    time_period = args.interval
-#    symbol = args.symbol
-#    #symbol='linkusdt'
-#    if time_period == 60:
-#        interval='1h'
-#    else:
-#        interval = f'{time_period}m'
-#    args.log = args.log or f'{symbol}_{interval}.log' 
-#    logfile = args.log
-#    
-#    starting_summary(args)
+    args = parse_args()
+    
+    interval = args.interval
+    symbol = args.symbol
+    side = args.side
+    period = args.period
+    mult = args.mult
+    ambuy = args.cashbuy
+    amsell = args.cashsell
+    
+    #symbol='linkusdt'
+    if interval == 60:
+        interval='1h'
+    else:
+        interval = f'{interval}m'
+    args.log = args.log or f'{symbol}_{interval}_{side}_{period}_{mult}.log' 
+    logfile = args.log
+    
+    starting_summary(args)
+    
+    logger.add(logfile, format="{time} {level} {message}", level='DEBUG')
     
     #symbol = 'BANDBNB'
-    symbol = 'BNBUSDT'
-    interval = '15m'
-    side = 'short'
+#    symbol = 'BNBUSDT'
+#    interval = '15m'
+#    side = 'short'
     
     #closes = binance_endpoints.GetKlines(symbol.upper(), interval=f'{time_period}m', limit=100)
     closes = binance_endpoints.GetKlines(symbol.upper(), interval=interval, limit=100)    
@@ -359,8 +380,8 @@ if __name__=='__main__':
 #    cash = args.cash
 #    
     #closes = []
-    Strategy = SuperTrendStrategy(10, 2, interval=interval, side = side, take_profit=0.01, stop_loss=None, 
-                 atr_fac_prof = 1, atr_fac_loss = 1, ambuy=13.0, amsell=0.05, symbol=symbol, logfile=logfile)
+    Strategy = SuperTrendStrategy(period, mult, interval=interval, side = side, take_profit=0.01, stop_loss=None, 
+                 atr_fac_prof = 1, atr_fac_loss = 1, ambuy=ambuy, amsell=amsell, symbol=symbol.upper(), logfile=logfile)
     
     ws = websocket.WebSocketApp(SOCKET, on_open=on_open, on_close=on_close, on_message=on_message)
     
