@@ -99,32 +99,113 @@ class SuperTrendStrategy():
         self.position = True  # Indicate that we open the position       
         return self.new_order
 
-    def check_position(self):
-        logger.info("Check ENTRY Order status...")
-        self.new_order_status = binance_endpoints.check_order_status(self.new_order)['status']
-        if (self.new_order_status == 'FILLED') and (not self.profit_order):
-            logger.info("ENTRY order FILLED")
-            if self.trade_type == 'long':
-                SellPrice = f'{self.profit_target:.{self.price_prec}f}'
-                logger.info("Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
-                self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
-            if self.trade_type == 'short':
-                BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
-                logger.info("Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
-                self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
-        if (self.new_order_status != 'FILLED'):
-            #self.log(f"New order status: {self.new_order_status}")
-            logger.info(f"ENTRY order status: {self.new_order_status}")
+    def check_position(self):        
+        #self.new_order_status = binance_endpoints.check_order_status(self.new_order)['status']
+        # If entry order was filled already before:
         if self.profit_order:
             self.prof_order_status = binance_endpoints.check_order_status(self.profit_order)['status']
             if self.prof_order_status == 'FILLED':
                 #self.log("Profit!")
                 logger.info("Profit!")
+                #!!! TODO: Call function to analyze trade
                 self.position = False
                 self.profit_order = False
             else:
                 #self.log(f"Exit order status: {self.prof_order_status}")
-                logger.info(f"Exit order status: {self.prof_order_status}")
+                logger.info(f"EXIT order status: {self.prof_order_status}")
+        else:        
+            # We have just submitted the ENTRY order:
+            self.new_order_status = self.check_entry_order(BUY_TIME_LIMIT=self.interval)
+            if (self.new_order_status == 'FILLED') and (not self.profit_order):
+                logger.info("ENTRY order FILLED")
+                if self.trade_type == 'long':
+                    SellPrice = f'{self.profit_target:.{self.price_prec}f}'
+                    logger.info(f"Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
+                    self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
+                if self.trade_type == 'short':
+                    BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
+                    logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
+                    self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
+            if (self.new_order_status != 'FILLED'):
+                #self.log(f"New order status: {self.new_order_status}")
+                logger.info(f"ENTRY order status: {self.new_order_status}")
+
+
+    def check_entry_order(self, BUY_TIME_LIMIT='30m'):    
+        '''
+        BUY_TIME_LIMIT maximum time in minutes for a pending entry order
+        default is the candlestick interval used for the trading strategy
+        If pending time exceeds - cancel order, if order is partially filled continue trade with the executed quantity
+            order status response:
+           {'symbol': 'WRXBTC',
+             'orderId': 7895233,
+             'orderListId': -1,
+             'clientOrderId': 'beMu1tPLtTpJlEYjuXSzGR',
+             'price': '0.00002132',
+             'origQty': '1111.00000000',
+             'executedQty': '1111.00000000',
+             'cummulativeQuoteQty': '0.02368652',
+             'status': 'FILLED',
+             'timeInForce': 'GTC',
+             'type': 'LIMIT',
+             'side': 'BUY',
+             'stopPrice': '0.00000000',
+             'icebergQty': '0.00000000',
+             'time': 1583698931057,
+             'updateTime': 1583699099624,
+             'isWorking': True,
+             'origQuoteOrderQty': '0.00000000'}
+        '''
+        #!!!TODO: Improve Partial filling. What if executed quantitity is too small, etc
+        logger.info("Check ENTRY Order status...")
+        BUY_TIME_LIMIT = pd.Timedelta(BUY_TIME_LIMIT)
+        try:
+            order = binance_endpoints.check_order_status(self.new_order)
+            self.new_order = order
+            status = self.new_order['status']            
+        except Exception as e:
+            print("Warning didn't manage to check order status! (Called from fuction 'check buy order')")
+            print(e)
+            return self.new_order['status']
+        try:
+            place_time = order['time']/1000 #Time in Binance is given in milliseconds, convert to seconds here.
+        except KeyError:
+            place_time = order['transactionTime']/1000
+    
+        if status == "FILLED":        
+            if self.stop_loss :
+                try:
+                    # ATTENTION! The OCO order function below for now works only for LONG trades
+                    self.profit_order = binance_endpoints.place_oco_order(self.symbol, order['price'], 
+                                 take_profit=self.take_profit, stop_loss=self.stop_loss, trade_type='REAL')
+                except Exception as e:
+                    logger.exception(f"WARNING!!!! OCO order didn't place! {e}")
+            else:
+                logger.info(f"Entry order for {self.symbol} filled! Now start evaluating the order...")
+                return status
+        
+        time_curr = time.time()
+        elapsed_min = (time_curr - place_time)/60
+        # convert to Timedelta object
+        elapsed_min = pd.Timedelta(f'{elapsed_min}m')
+        if elapsed_min > BUY_TIME_LIMIT:
+           #if trade_type == 'REAL': order = cancel_order(order)
+           order = binance_endpoints.cancel_order(order)
+           logger.info(f"ENTRY order didn't fill in {BUY_TIME_LIMIT}")
+           executedQty = float(order['executedQty'])
+           if executedQty > 0:
+               logger.info("Order Partially Filled!")
+               # Continue with the executed quantity
+               logger.info("Perform evaluation with executed quantity...")
+               status = "PARTIALLY_FILLED"
+               return status
+            
+           status = "CANCELLED"
+           logger.info("Cancel order, start searching for new opportunities!")
+           self.position = False
+           
+        return status
+
 
     @logger.catch
     def next(self, op, hi, lo, cl, op_time):      
@@ -237,7 +318,8 @@ def on_message(ws, message):
         #print("closes")
         #print(closes)
         # Call the strategy
-        Strategy.next(pd.Series(opens+[op]), pd.Series(highs+[hi]), pd.Series(lows+[lo]), pd.Series(closes+[close]), op_time)
+        #Strategy.next(pd.Series(opens+[op]), pd.Series(highs+[hi]), pd.Series(lows+[lo]), pd.Series(closes+[close]), op_time)
+        Strategy.next(pd.Series(opens[:-1] + [op]), pd.Series(highs[:-1]+[hi]), pd.Series(lows[:-1]+[lo]), pd.Series(closes[:-1]+[close]), op_time)
         count = 0
 
     
@@ -323,6 +405,16 @@ def parse_args():
         '--cashsell', 
         default=1000, type=float,
         help='Amount of cash for SHORT trades, in units of quote asset')
+    
+    parser.add_argument(
+        '--profit', 
+        default=0.05, type=float,
+        help='Take profit as a fraction e.g. 1% profit should be 0.01')
+
+    parser.add_argument(
+        '--loss', 
+        default=None, type=float,
+        help='Stop loss as a fraction e.g. 1% loss should be 0.01. Can be None (dangerous!)')    
 
     parser.add_argument(
         '--log', '-l',
@@ -345,6 +437,8 @@ if __name__=='__main__':
     mult = args.mult
     ambuy = args.cashbuy
     amsell = args.cashsell
+    profit = args.profit
+    loss = args.loss
     
     #symbol='linkusdt'
     if interval == 60:
@@ -380,7 +474,7 @@ if __name__=='__main__':
 #    cash = args.cash
 #    
     #closes = []
-    Strategy = SuperTrendStrategy(period, mult, interval=interval, side = side, take_profit=0.01, stop_loss=None, 
+    Strategy = SuperTrendStrategy(period, mult, interval=interval, side = side, take_profit=profit, stop_loss=loss, 
                  atr_fac_prof = 1, atr_fac_loss = 1, ambuy=ambuy, amsell=amsell, symbol=symbol.upper(), logfile=logfile)
     
     ws = websocket.WebSocketApp(SOCKET, on_open=on_open, on_close=on_close, on_message=on_message)
