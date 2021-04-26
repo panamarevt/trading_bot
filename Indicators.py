@@ -64,6 +64,50 @@ def EMA(close, period):
     '''Returns EMA of given period by accessing EMA from TA library'''
     return ta.trend.ema(close, period)
 
+def supertrend(hi,lo,cl,period,mult, and_= True):
+    # The SuperTrend indicator
+    atr = ta.volatility.AverageTrueRange(hi,lo,cl,n=int(period)).average_true_range() 
+    basic_ub = (hi+lo)/2 + mult*atr
+    basic_lb = (hi+lo)/2 - mult*atr
+    
+    
+    prev_final_ub = basic_ub.iloc[-2]
+    prev_final_lb = basic_lb.iloc[-2]
+    prev_close = cl.iloc[-2]
+
+    # the conditions can be computed by AND or OR logic (different sources use different options)
+    # here we include option to choose from (for testing purposes)
+    if and_:
+        condup = (basic_ub.iloc[-1] < prev_final_ub) and (prev_close > prev_final_ub )
+        conddown = (basic_lb.iloc[-1] > prev_final_lb) and (prev_close < prev_final_lb )
+    else:
+        condup = (basic_ub.iloc[-1] < prev_final_ub) or (prev_close > prev_final_ub )
+        conddown = (basic_lb.iloc[-1] > prev_final_lb) or (prev_close < prev_final_lb )
+        
+    
+    # final upper band
+    if condup:
+        final_ub = basic_ub.iloc[-1]
+    else:
+        final_ub = prev_final_ub
+    
+    # final lower band
+    if conddown:
+        final_lb = basic_lb.iloc[-1]
+    else:
+        final_lb = prev_final_lb
+    
+    if cl.iloc[-1] <= final_ub:
+        strend = final_ub
+        dir_ = -1
+    else:
+        strend = final_lb
+        dir_ = 1
+    
+    return strend, dir_
+    
+
+
 def supertrend_signal(op, hi, lo, cl, period, mult, cond='touch', side='long'):
     '''Check if there is a BUY/SELL signal for a SuperTrend strategy
     returns True if the signal conditions are met, otherwise False.
@@ -83,6 +127,14 @@ def supertrend_signal(op, hi, lo, cl, period, mult, cond='touch', side='long'):
     super_trend = super_trend.iloc[-1,0] # take only the latest (current) value; first (0) column is the numerical value of the trend      
     #print(f"SuperTrend value: {super_trend}, uptrend: {uptrend}")
     logger.debug((f"SuperTrend value: {super_trend}, uptrend: {uptrend}"))
+    super_trend_new, dir_ = supertrend(hi, lo, cl, period, mult)
+    uptrend_new = dir_ == 1
+    logger.debug((f"SuperTrend value: {super_trend_new}, uptrend: {uptrend_new}"))
+    super_trend_or, dir_or = supertrend(hi, lo, cl, period, mult, and_ = False)
+    uptrend_or = dir_or == 1
+    logger.debug((f"SuperTrend value: {super_trend_or}, uptrend: {uptrend_or}"))    
+#    super_trend = super_trend_or
+#    uptrend = uptrend_or
     signal = False
     if cond == 'touch':
         if (side=='long') and uptrend:

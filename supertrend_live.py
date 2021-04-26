@@ -279,7 +279,7 @@ class SuperTrendStrategy():
 
 
 def on_message(ws, message):
-    global closes, opens, highs, lows, count
+    global closes, opens, highs, lows, count, elapsed
     
     #t_start = time.time()
     #print('received message')
@@ -310,6 +310,7 @@ def on_message(ws, message):
             logger.debug("Check position status")
             Strategy.check_position()
             update_position = time.time()
+            elapsed = time.time()
         count = 0
         
 
@@ -319,18 +320,20 @@ def on_message(ws, message):
         #print(closes)
         # Call the strategy
         #Strategy.next(pd.Series(opens+[op]), pd.Series(highs+[hi]), pd.Series(lows+[lo]), pd.Series(closes+[close]), op_time)
-        Strategy.next(pd.Series(opens[:-1] + [op]), pd.Series(highs[:-1]+[hi]), pd.Series(lows[:-1]+[lo]), pd.Series(closes[:-1]+[close]), op_time)
+        #Strategy.next(pd.Series(opens[:-1] + [op]), pd.Series(highs[:-1]+[hi]), pd.Series(lows[:-1]+[lo]), pd.Series(closes[:-1]+[close]), op_time)
         count = 0
 
-    
+    elapsed = time.time() - elapsed
     #logger.debug(f"In position: {Strategy.position}")
     if Strategy.position:
         update_position = time.time() - update_position
-        logger.debug(f"Last time since checked the position status ...{update_position} s")
-        if update_position > 30:
+        logger.debug(f"Last time since checked the position status ...{elapsed} s")
+        if elapsed > 30:
+        #if update_position > 30:
             logger.debug("Check position status")
             Strategy.check_position()
             update_position = time.time()
+            elapsed = time.time()
         update_position = time.time() - update_position
     max_len = 50
     if len(closes) >= max_len: # Make sure that we have at leat 20 elements to compute 20-period MA and std
@@ -477,6 +480,7 @@ if __name__=='__main__':
     Strategy = SuperTrendStrategy(period, mult, interval=interval, side = side, take_profit=profit, stop_loss=loss, 
                  atr_fac_prof = 1, atr_fac_loss = 1, ambuy=ambuy, amsell=amsell, symbol=symbol.upper(), logfile=logfile)
     
+    elapsed = time.time()
     ws = websocket.WebSocketApp(SOCKET, on_open=on_open, on_close=on_close, on_message=on_message)
     
     ws.run_forever()
