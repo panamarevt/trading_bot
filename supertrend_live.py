@@ -208,7 +208,7 @@ class SuperTrendStrategy():
 
 
     @logger.catch
-    def next(self, op, hi, lo, cl, op_time):      
+    def next(self, op, hi, lo, cl, op_time, trade_type='LIVE'):      
         '''Strategy decision-making for the received candlestick data
         params:
         ------------    
@@ -236,7 +236,8 @@ class SuperTrendStrategy():
                 logger.debug(f"Long signal: {signal_long}")
                 if signal_long:
                         #self.log(f"Price signal!  Buy at {price}")
-                        logger.info(f"Price signal!  Buy at {price}")
+                        logger.info(f"Price signal!  Buy {self.symbol} at {price}")
+                        if trade_type == 'ALERT': return
                         if self.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1+self.take_profit)*price
                         else: # if profit depends on ATR:
@@ -257,7 +258,9 @@ class SuperTrendStrategy():
                 logger.debug(f"Short signal: {signal_short}")
                 if signal_short:
                         #self.log(f"Price signal!  Sell at {price}")
-                        logger.info(f"Price signal!  Sell at {price}")
+                        #logger.info(f"Price signal!  Sell at {price}")
+                        logger.info(f"Price signal!  Sell {self.symbol} at {price}")
+                        if trade_type == 'ALERT': return
                         if self.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1-self.take_profit)*price                        
                         else:
@@ -279,7 +282,7 @@ class SuperTrendStrategy():
 
 
 def on_message(ws, message):
-    global closes, opens, highs, lows, count, elapsed
+    global closes, opens, highs, lows, count, elapsed, start
     
     #t_start = time.time()
     #print('received message')
@@ -310,30 +313,32 @@ def on_message(ws, message):
             logger.debug("Check position status")
             Strategy.check_position()
             update_position = time.time()
-            elapsed = time.time()
+            start = time.time()
         count = 0
         
-
-    if count == 4:
-
+    elapsed = time.time() - start
+    #logger.debug(f"elapsed = {elapsed}")
+    if elapsed >= 60:
+        logger.debug(f"elapsed = {elapsed}")
         #print("closes")
         #print(closes)
         # Call the strategy
         #Strategy.next(pd.Series(opens+[op]), pd.Series(highs+[hi]), pd.Series(lows+[lo]), pd.Series(closes+[close]), op_time)
-        #Strategy.next(pd.Series(opens[:-1] + [op]), pd.Series(highs[:-1]+[hi]), pd.Series(lows[:-1]+[lo]), pd.Series(closes[:-1]+[close]), op_time)
+        Strategy.next(pd.Series(opens[:-1] + [op]), pd.Series(highs[:-1]+[hi]), pd.Series(lows[:-1]+[lo]), pd.Series(closes[:-1]+[close]), op_time, trade_type='ALERT')
+        start = time.time()
         count = 0
 
-    elapsed = time.time() - elapsed
+    elapsed = time.time() - start
     #logger.debug(f"In position: {Strategy.position}")
     if Strategy.position:
         update_position = time.time() - update_position
         logger.debug(f"Last time since checked the position status ...{elapsed} s")
-        if elapsed > 30:
+        if elapsed > 60:
         #if update_position > 30:
             logger.debug("Check position status")
             Strategy.check_position()
             update_position = time.time()
-            elapsed = time.time()
+            start = time.time()
         update_position = time.time() - update_position
     max_len = 50
     if len(closes) >= max_len: # Make sure that we have at leat 20 elements to compute 20-period MA and std
@@ -410,8 +415,8 @@ def parse_args():
         help='Amount of cash for SHORT trades, in units of quote asset')
     
     parser.add_argument(
-        '--profit', 
-        default=0.05, type=float,
+        '--profit', type=float, 
+        default=0.05,
         help='Take profit as a fraction e.g. 1% profit should be 0.01')
 
     parser.add_argument(
@@ -477,10 +482,13 @@ if __name__=='__main__':
 #    cash = args.cash
 #    
     #closes = []
+    elapsed = 0
+    start = time.time()
     Strategy = SuperTrendStrategy(period, mult, interval=interval, side = side, take_profit=profit, stop_loss=loss, 
-                 atr_fac_prof = 1, atr_fac_loss = 1, ambuy=ambuy, amsell=amsell, symbol=symbol.upper(), logfile=logfile)
+                 atr_fac_prof = 2, atr_fac_loss = 1, ambuy=ambuy, amsell=amsell, symbol=symbol.upper(), logfile=logfile)
     
-    elapsed = time.time()
+    end = time.time()
+    elapsed += end - start
     ws = websocket.WebSocketApp(SOCKET, on_open=on_open, on_close=on_close, on_message=on_message)
     
     ws.run_forever()
