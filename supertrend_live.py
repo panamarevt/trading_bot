@@ -99,6 +99,18 @@ class SuperTrendStrategy():
         self.position = True  # Indicate that we open the position       
         return self.new_order
 
+    def analyze_trade(self):
+        '''Write trade statistics to a file (TODO)'''
+        pass
+
+    def dump(self):
+        '''Write current variables to a file to read on restart (todo)'''
+        pass
+
+    def load(self):
+        '''Load data from dump file to continue trading'''
+        pass
+
     def check_position(self):        
         #self.new_order_status = binance_endpoints.check_order_status(self.new_order)['status']
         # If entry order was filled already before:
@@ -118,17 +130,31 @@ class SuperTrendStrategy():
             self.new_order_status = self.check_entry_order(BUY_TIME_LIMIT=self.interval)
             if (self.new_order_status == 'FILLED') and (not self.profit_order):
                 logger.info("ENTRY order FILLED")
-                if self.trade_type == 'long':
-                    SellPrice = f'{self.profit_target:.{self.price_prec}f}'
-                    logger.info(f"Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
-                    self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
-                if self.trade_type == 'short':
-                    BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
-                    logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
-                    self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
+                # if self.trade_type == 'long':
+                #     SellPrice = f'{self.profit_target:.{self.price_prec}f}'
+                #     logger.info(f"Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
+                #     self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
+                # if self.trade_type == 'short':
+                #     BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
+                #     logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
+                #     self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
+                self.place_exit_order()
             if (self.new_order_status != 'FILLED'):
                 #self.log(f"New order status: {self.new_order_status}")
                 logger.info(f"ENTRY order status: {self.new_order_status}")
+
+    def place_exit_order(self, qty=None):
+        '''Place buy or sell order depending on the trade type
+        Need to specify quantity for partially filled entry orders'''
+        qty = qty or self.qty
+        if self.trade_type == 'long':
+            SellPrice = f'{self.profit_target:.{self.price_prec}f}'
+            logger.info(f"Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{qty}")
+            self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=qty, price=SellPrice)
+        if self.trade_type == 'short':
+            BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
+            logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
+            self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=qty, price=BuyPrice)        
 
 
     def check_entry_order(self, BUY_TIME_LIMIT='30m'):    
@@ -170,7 +196,7 @@ class SuperTrendStrategy():
         try:
             place_time = order['time']/1000 #Time in Binance is given in milliseconds, convert to seconds here.
         except KeyError:
-            place_time = order['transactionTime']/1000
+            place_time = order['transactTime']/1000
     
         if status == "FILLED":        
             if self.stop_loss :
@@ -198,6 +224,8 @@ class SuperTrendStrategy():
                # Continue with the executed quantity
                logger.info("Perform evaluation with executed quantity...")
                status = "PARTIALLY_FILLED"
+               self.qty = executedQty
+               self.place_exit_order(qty=executedQty)                   
                return status
             
            status = "CANCELLED"
