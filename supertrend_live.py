@@ -22,6 +22,7 @@ import binance_endpoints
 from binance.client import Client
 #from strategies import weighted_avg_orderBook
 import indicators
+import os
 
 from loguru import logger
 
@@ -34,7 +35,8 @@ logger.add('debug.log', format="{time} {level} {message}", level='DEBUG')
 class SuperTrendStrategy():
 
     def __init__(self, strendperiod, strendmult, interval=15, side = 'long', take_profit=0.05, stop_loss=100, 
-                 atr_fac_prof = 1, atr_fac_loss = 1, ambuy=100.0, amsell=0.1, symbol='ETHUSDT', logfile=None):
+                 atr_fac_prof = 1, atr_fac_loss = 1, ambuy=100.0, amsell=0.1, symbol='ETHUSDT', logfile=None,
+                 compound=1.0, keep_quote=0.5):
         #self.op = self.datas[0].open
         #self.cl = self.datas[0].close
         # Main parameters of the strategy:
@@ -53,15 +55,30 @@ class SuperTrendStrategy():
         # Auxillary vars:
         self.count = 0
         self.position = False
-        self.cumulative_profit = 0
+        self.profit=0
+        self.base_profit = 0
+        self.quote_profit = 0
+        self.total_base_profit = 0
+        self.total_quote_profit = 0
+        self.gross_usd = 0
+        self.net_usd = 0
+        self.total_usd_profit = 0 # total net profit expressed in USD
+        #self.cumulative_profit = 0
         self.total_fee = 0
         self.fee = 0.075*0.01
+        self.trade_fee = 0
         
         self.price_prec = binance_endpoints.get_price_precision(self.symbol)
         self.lot_prec = binance_endpoints.get_lot_precision(self.symbol)
     
         self.new_order = False
         self.profit_order = False
+        self.elapsed = 0 # track duration of the trade
+        # Compounding new trades:
+        self.compound = compound # how much of base profit to reinvest [0;1]
+        self.keep_quote = keep_quote # how much of profit keep in quote coin [0;1]
+        # Get base and quote coins:
+        self.get_basequote()
     
     def log(self, txt, dt=None, fname=None):
         ''' Logging function for this strategy'''
@@ -72,7 +89,15 @@ class SuperTrendStrategy():
             with open(fname, 'a') as f:
                 f.write('%s, %s\n' % (dt.strftime("%d %b %Y %H:%M:%S"), txt)) 
 
-
+    def get_basequote(self):
+        #base_list = ['BTC', 'ETH', 'BNB', 'USDT', 'GBP']
+        if self.symbol[-3:] == 'SDT':
+            self.base = 'USDT'
+        else:
+            self.base = self.symbol[-3:]
+        self.quote = self.symbol[:-len(self.base)]
+        logger.info(f"Quote: {self.quote}, Base:{self.base}")
+        
     def place_buy_order(self, qty=None, price=None):
         '''Place BUY order and determine the price if not specified'''
         price = price or self.cl.iloc[-1] # if not specified - take current close price
@@ -80,6 +105,7 @@ class SuperTrendStrategy():
         self.qty = float(binance_endpoints.truncate(qty, self.lot_prec)) # truncate quantity to match the lot precision
         prec = self.price_prec # get price precision
         BuyPrice = f'{price:.{prec}f}' # buy price should be a string
+        self.entry_price = float(BuyPrice)
         logger.info(f"Placing BUY order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
         self.new_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)
         self.trade_type = 'long' # global class variable to define whether this is short or long trade
@@ -93,6 +119,7 @@ class SuperTrendStrategy():
         self.qty = float(binance_endpoints.truncate(qty, self.lot_prec)) # truncate quantity to match the lot precision
         prec = self.price_prec # get price precision
         SellPrice = f'{price:.{prec}f}' # buy price should be a string
+        self.entry_price = float(SellPrice)
         logger.info(f"Placing SELL order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
         self.new_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
         self.trade_type = 'short' # global class variable to define whether this is short or long trade
@@ -101,6 +128,30 @@ class SuperTrendStrategy():
 
     def analyze_trade(self):
         '''Write trade statistics to a file (TODO)'''
+        fname = f"{self.logfile}.trades"
+        # time,symbol,EntryPrice,ExitPrice,qty,profit_pc,base_profit,quote_profit,gross_usd_profit,net_usd_profit,fee,duration
+        if self.trade_type == 'long':
+            profit_pc = (self.exit_price - self.entry_price)/self.entry_price
+        else:
+            profit_pc = (self.entry_price - self.exit_price)/self.entry_price
+        self.total_base_profit += self.base_profit
+        self.total_quote_profit += self.quote_profit
+        self.total_usd_profit += self.net_usd
+        self.elapsed = (self.end - self.start)/60 # duration in minutes
+        header = f"time,symbol,EntryPrice,ExitPrice,qty,profit_pc,{self.base}_profit,{self.quote}_profit,gross_usd_profit,net_usd_profit,fee,duration"
+        with open(fname, 'a') as f:
+            empty = os.path.getsize(fname) == 0
+            if empty:
+                
+                f.write(f"{header}\n")
+            else:
+                message = datetime.datetime.now().strftime("%d %b %Y %H:%M:%S")
+                message += f",{self.symbol},{self.entry_price},{self.exit_price},{self.qty}"
+                message += f",{profit_pc:.2f},{self.base_profit},{self.quote_profit}"
+                message += f",{self.gross_usd:.2f},{self.net_usd:.2f},{self.trade_fee},{self.elapsed:.1f}"
+                f.write(f"{message}\n")
+                print(header)
+                print(message)
         pass
 
     def dump(self):
@@ -119,7 +170,13 @@ class SuperTrendStrategy():
             if self.prof_order_status == 'FILLED':
                 #self.log("Profit!")
                 logger.info("Profit!")
+                self.end = time.time()
+                if self.trade_type == 'long':
+                    self.ambuy += self.base_profit * self.compound
+                else:
+                    self.amsell += self.quote_profit * self.compound
                 #!!! TODO: Call function to analyze trade
+                self.analyze_trade()
                 self.position = False
                 self.profit_order = False
             else:
@@ -149,12 +206,35 @@ class SuperTrendStrategy():
         qty = qty or self.qty
         if self.trade_type == 'long':
             SellPrice = f'{self.profit_target:.{self.price_prec}f}'
+            self.exit_price = float(SellPrice)
+            dbase = qty*(self.exit_price - self.entry_price)            
+            self.base_profit = (1 - self.keep_quote)*dbase
+            if self.keep_quote > 0 :
+                quoteQty = qty - self.keep_quote*dbase/self.exit_price
+                self.qty = float(binance_endpoints.truncate(quoteQty, self.lot_prec))
+                qty = self.qty
+                logger.debug(f"quoteQty = {quoteQty:.8f}")
             logger.info(f"Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{qty}")
+            logger.info(f"(Keep {self.keep_quote} of the profit in {self.quote})")
             self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=qty, price=SellPrice)
+            logger.debug(f"dbase, base_profit = {dbase}, {self.base_profit}")
         if self.trade_type == 'short':
-            BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
-            logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
-            self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=qty, price=BuyPrice)        
+            BuyPrice = f'{self.profit_target:.{self.price_prec}f}'            
+            self.exit_price = float(BuyPrice)
+            # Quote quantity is what we sell, base is what we buy (for short trades)
+            origQty = qty
+            baseQty = self.qty*self.entry_price
+            dbaseQty =  self.qty*float(BuyPrice) - baseQty
+            self.base_profit = (1.0 - self.keep_quote)*dbaseQty
+            if self.keep_quote > 0 : # check if we want to compound profits
+                self.qty = (baseQty + self.keep_quote*dbaseQty) / float(BuyPrice)
+                self.qty = float(binance_endpoints.truncate(self.qty, self.lot_prec))
+                qty = self.qty
+            self.quote_profit = qty - origQty 
+            logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{qty}")     
+            logger.info(f"(Keep {self.keep_quote} of the profit in {self.quote})")
+            self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=qty, price=BuyPrice)
+            logger.debug(f"dbase, base_profit = {dbaseQty}, {self.quote_profit}")
 
 
     def check_entry_order(self, BUY_TIME_LIMIT='30m'):    
@@ -265,6 +345,7 @@ class SuperTrendStrategy():
                 if signal_long:
                         #self.log(f"Price signal!  Buy at {price}")
                         logger.info(f"Price signal!  Buy {self.symbol} at {price}")
+                        self.start = time.time()
                         if trade_type == 'ALERT': return
                         if self.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1+self.take_profit)*price
@@ -288,6 +369,7 @@ class SuperTrendStrategy():
                         #self.log(f"Price signal!  Sell at {price}")
                         #logger.info(f"Price signal!  Sell at {price}")
                         logger.info(f"Price signal!  Sell {self.symbol} at {price}")
+                        self.start = time.time()
                         if trade_type == 'ALERT': return
                         if self.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1-self.take_profit)*price                        

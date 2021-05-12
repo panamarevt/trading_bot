@@ -127,12 +127,12 @@ def supertrend_signal(op, hi, lo, cl, period, mult, cond='touch', side='long'):
     super_trend = super_trend.iloc[-1,0] # take only the latest (current) value; first (0) column is the numerical value of the trend      
     #print(f"SuperTrend value: {super_trend}, uptrend: {uptrend}")
     logger.debug((f"SuperTrend value: {super_trend}, uptrend: {uptrend}"))
-    super_trend_new, dir_ = supertrend(hi, lo, cl, period, mult)
-    uptrend_new = dir_ == 1
-    logger.debug((f"SuperTrend value: {super_trend_new}, uptrend: {uptrend_new}"))
-    super_trend_or, dir_or = supertrend(hi, lo, cl, period, mult, and_ = False)
-    uptrend_or = dir_or == 1
-    logger.debug((f"SuperTrend value: {super_trend_or}, uptrend: {uptrend_or}"))    
+    #super_trend_new, dir_ = supertrend(hi, lo, cl, period, mult)
+    #uptrend_new = dir_ == 1
+    #logger.debug((f"SuperTrend value: {super_trend_new}, uptrend: {uptrend_new}"))
+    #super_trend_or, dir_or = supertrend(hi, lo, cl, period, mult, and_ = False)
+    #uptrend_or = dir_or == 1
+    #logger.debug((f"SuperTrend value: {super_trend_or}, uptrend: {uptrend_or}"))    
 #    super_trend = super_trend_or
 #    uptrend = uptrend_or
     signal = False
