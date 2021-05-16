@@ -26,6 +26,7 @@ import os
 
 from loguru import logger
 
+
 import keys
 client = Client(api_key=keys.Pkey, api_secret=keys.Skey)
 
@@ -126,32 +127,81 @@ class SuperTrendStrategy():
         self.position = True  # Indicate that we open the position       
         return self.new_order
 
+    def get_trade_fee(self):
+        '''Returns total commission for the trade and the commision asset'''
+        # get all trades
+        trades = client.get_my_trades(symbol=self.symbol)
+        trades = pd.DataFrame(trades)
+        # convert to numerical types
+        trades = trades.apply(pd.to_numeric, errors='ignore')
+        # entry trades for the entry order:
+        entry = trades.orderId == int(self.new_order['orderId'])
+        # exit trades for the exit order:
+        exit = trades.orderId == int(self.profit_order['orderId'])
+        # compute profits
+        quote_profit = trades[entry].qty.sum() - trades[exit].qty.sum()
+        base_profit = trades[entry].quoteQty.sum() - trades[exit].quoteQty.sum()
+        # finally compute fee:
+        fee = trades[entry].commission.sum() + trades[exit].commission.sum()
+        # ger fee asset
+        feeAsset = trades[exit].commissionAsset.iloc[-1]
+        return fee, feeAsset
+    
     def analyze_trade(self):
         '''Write trade statistics to a file (TODO)'''
-        fname = f"{self.logfile}.trades"
+        fname = f"{self.logfile}.trades.csv"
         # time,symbol,EntryPrice,ExitPrice,qty,profit_pc,base_profit,quote_profit,gross_usd_profit,net_usd_profit,fee,duration
         if self.trade_type == 'long':
             profit_pc = (self.exit_price - self.entry_price)/self.entry_price
+            self.base_profit = float(self.profit_order['cummulativeQuoteQty']) - float(self.new_order['cummulativeQuoteQty'])
+            self.quote_profit = float(self.profit_order['executedQty']) - float(self.new_order['executedQty'])
         else:
             profit_pc = (self.entry_price - self.exit_price)/self.entry_price
+            self.base_profit = float(self.new_order['cummulativeQuoteQty']) - float(self.profit_order['cummulativeQuoteQty'])
+            self.quote_profit = float(self.new_order['executedQty']) - float(self.profit_order['executedQty'])                      
+        
+        avg_quote_price = client.get_avg_price(symbol='BNBUSDT')
+        if self.base in ['USDT', 'BUSD', 'USDC', 'DAI', 'USD']:
+            avg_base_price = 1.0
+        else:
+            avg_base_price = client.get_avg_price(symbol=f'{self.base}USDT')
+            avg_base_price = float(avg_base_price['price'])
+        if self.quote in ['USDT', 'BUSD', 'USDC', 'DAI', 'USD']:
+            avg_quote_price = 1.0
+        else:
+            avg_quote_price = client.get_avg_price(symbol=f'{self.quote}USDT')
+            avg_quote_price = float(avg_quote_price['price'])
+        # Now, compute profits in USD terms:
+        self.base_usd = self.base_profit/avg_base_price
+        self.quote_usd = self.quote_profit/avg_quote_price
+        self.gross_usd = self.base_profit = self.base_usd + self.quote_usd
+        # Compute TRUE trade fee:
+        fee, feeAsset = self.get_trade_fee()
+        # Now compute net USD profit:
+        feeAssetUsdPrice = float( client.get_avg_price(symbol=f'{feeAsset}USDT')['price'] )
+        self.net_usd = self.gross_usd - fee/feeAssetUsdPrice
+        self.trade_fee = fee
+        
         self.total_base_profit += self.base_profit
         self.total_quote_profit += self.quote_profit
+        
         self.total_usd_profit += self.net_usd
         self.elapsed = (self.end - self.start)/60 # duration in minutes
+        
+        
+        
         header = f"time,symbol,EntryPrice,ExitPrice,qty,profit_pc,{self.base}_profit,{self.quote}_profit,gross_usd_profit,net_usd_profit,fee,duration"
         with open(fname, 'a') as f:
             empty = os.path.getsize(fname) == 0
-            if empty:
-                
+            if empty:                
                 f.write(f"{header}\n")
-            else:
-                message = datetime.datetime.now().strftime("%d %b %Y %H:%M:%S")
-                message += f",{self.symbol},{self.entry_price},{self.exit_price},{self.qty}"
-                message += f",{profit_pc:.2f},{self.base_profit},{self.quote_profit}"
-                message += f",{self.gross_usd:.2f},{self.net_usd:.2f},{self.trade_fee},{self.elapsed:.1f}"
-                f.write(f"{message}\n")
-                print(header)
-                print(message)
+            message = datetime.datetime.now().strftime("%d %b %Y %H:%M:%S")
+            message += f",{self.symbol},{self.entry_price},{self.exit_price},{self.qty}"
+            message += f",{profit_pc:.2f},{self.base_profit},{self.quote_profit}"
+            message += f",{self.gross_usd:.2f},{self.net_usd:.2f},{self.trade_fee},{self.elapsed:.1f}"
+            f.write(f"{message}\n")
+            print(header)
+            print(message)
         pass
 
     def dump(self):
@@ -172,9 +222,13 @@ class SuperTrendStrategy():
                 logger.info("Profit!")
                 self.end = time.time()
                 if self.trade_type == 'long':
+                    logger.debug(f"last ambuy: {self.ambuy}")
                     self.ambuy += self.base_profit * self.compound
+                    logger.debug(f"new ambuy: {self.ambuy}")
                 else:
+                    logger.debug(f"last amsell: {self.amsell}")
                     self.amsell += self.quote_profit * self.compound
+                    logger.debug(f"new amsell: {self.amsell}")
                 #!!! TODO: Call function to analyze trade
                 self.analyze_trade()
                 self.position = False
@@ -186,15 +240,7 @@ class SuperTrendStrategy():
             # We have just submitted the ENTRY order:
             self.new_order_status = self.check_entry_order(BUY_TIME_LIMIT=self.interval)
             if (self.new_order_status == 'FILLED') and (not self.profit_order):
-                logger.info("ENTRY order FILLED")
-                # if self.trade_type == 'long':
-                #     SellPrice = f'{self.profit_target:.{self.price_prec}f}'
-                #     logger.info(f"Place profit order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
-                #     self.profit_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
-                # if self.trade_type == 'short':
-                #     BuyPrice = f'{self.profit_target:.{self.price_prec}f}'
-                #     logger.info(f"Place profit order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
-                #     self.profit_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)           
+                logger.info("ENTRY order FILLED")        
                 self.place_exit_order()
             if (self.new_order_status != 'FILLED'):
                 #self.log(f"New order status: {self.new_order_status}")
@@ -223,7 +269,8 @@ class SuperTrendStrategy():
             self.exit_price = float(BuyPrice)
             # Quote quantity is what we sell, base is what we buy (for short trades)
             origQty = qty
-            baseQty = self.qty*self.entry_price
+            baseQty = float( self.new_order['cummulativeQuoteQty'] )
+            #baseQty = self.qty*self.entry_price
             dbaseQty =  self.qty*float(BuyPrice) - baseQty
             self.base_profit = (1.0 - self.keep_quote)*dbaseQty
             if self.keep_quote > 0 : # check if we want to compound profits
@@ -479,7 +526,6 @@ def starting_summary(args):
     for var in vars(args):
         print(f"{var}: {vars(args)[var]}")
  
-
 
 def parse_args():
     ''' Main parameters of the strategy:
