@@ -25,13 +25,14 @@ import indicators
 import os
 
 from loguru import logger
-
+import telegram
 
 import keys
 client = Client(api_key=keys.Pkey, api_secret=keys.Skey)
 
 logger.add('debug.log', format="{time} {level} {message}", level='DEBUG')
-
+api_telega = keys.telegram_api
+user_id_telega = keys.telegram_user_id
 
 class SuperTrendStrategy():
 
@@ -80,6 +81,11 @@ class SuperTrendStrategy():
         self.keep_quote = keep_quote # how much of profit keep in quote coin [0;1]
         # Get base and quote coins:
         self.get_basequote()
+        
+        # initialize telegram bot:
+        self.bot = telegram.Bot(token=api_telega)
+        msg = f"Start trading: symbol:{self.symbol}, interval:{self.interval}, side:{self.side}, profit:{self.take_profit}, supertrend:{self.strendperiod}:{self.strendmult}"
+        self.send_to_telegram(msg)
     
     def log(self, txt, dt=None, fname=None):
         ''' Logging function for this strategy'''
@@ -90,6 +96,10 @@ class SuperTrendStrategy():
             with open(fname, 'a') as f:
                 f.write('%s, %s\n' % (dt.strftime("%d %b %Y %H:%M:%S"), txt)) 
 
+    def send_to_telegram(self, msg):
+        self.bot.send_message(chat_id=user_id_telega, text=msg)      
+        
+                
     def get_basequote(self):
         #base_list = ['BTC', 'ETH', 'BNB', 'USDT', 'GBP']
         if self.symbol[-3:] == 'SDT':
@@ -108,6 +118,8 @@ class SuperTrendStrategy():
         BuyPrice = f'{price:.{prec}f}' # buy price should be a string
         self.entry_price = float(BuyPrice)
         logger.info(f"Placing BUY order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
+        #self.bot.send_message(chat_id=user_id, text=f"Placing BUY order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
+        self.send_to_telegram(f"Placing BUY order: symbol:{self.symbol}; price:{BuyPrice}; qty:{self.qty}")
         self.new_order = client.order_limit_buy(symbol=self.symbol, quantity=self.qty, price=BuyPrice)
         self.trade_type = 'long' # global class variable to define whether this is short or long trade
         self.position = True  # Indicate that we open the position       
@@ -122,6 +134,8 @@ class SuperTrendStrategy():
         SellPrice = f'{price:.{prec}f}' # buy price should be a string
         self.entry_price = float(SellPrice)
         logger.info(f"Placing SELL order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
+        #self.bot.send_message(chat_id=user_id, text=f"Placing SELL order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
+        self.send_to_telegram(f"Placing SELL order: symbol:{self.symbol}; price:{SellPrice}; qty:{self.qty}")
         self.new_order = client.order_limit_sell(symbol=self.symbol, quantity=self.qty, price=SellPrice)
         self.trade_type = 'short' # global class variable to define whether this is short or long trade
         self.position = True  # Indicate that we open the position       
@@ -152,14 +166,14 @@ class SuperTrendStrategy():
         fname = f"{self.logfile}.trades.csv"
         # time,symbol,EntryPrice,ExitPrice,qty,profit_pc,base_profit,quote_profit,gross_usd_profit,net_usd_profit,fee,duration
         if self.trade_type == 'long':
-            profit_pc = (self.exit_price - self.entry_price)/self.entry_price
+            profit_pc = (self.exit_price - self.entry_price)/self.entry_price            
+            self.quote_profit = float(self.new_order['executedQty']) - float(self.profit_order['executedQty'])
             self.base_profit = float(self.profit_order['cummulativeQuoteQty']) - float(self.new_order['cummulativeQuoteQty'])
-            self.quote_profit = float(self.profit_order['executedQty']) - float(self.new_order['executedQty'])
         else:
             profit_pc = (self.entry_price - self.exit_price)/self.entry_price
+            #self.base_profit = float(self.new_order['cummulativeQuoteQty']) - float(self.profit_order['cummulativeQuoteQty'])
+            self.quote_profit = float(self.profit_order['executedQty']) - float(self.new_order['executedQty'])                      
             self.base_profit = float(self.new_order['cummulativeQuoteQty']) - float(self.profit_order['cummulativeQuoteQty'])
-            self.quote_profit = float(self.new_order['executedQty']) - float(self.profit_order['executedQty'])                      
-        
         avg_quote_price = client.get_avg_price(symbol='BNBUSDT')
         if self.base in ['USDT', 'BUSD', 'USDC', 'DAI', 'USD']:
             avg_base_price = 1.0
@@ -172,14 +186,14 @@ class SuperTrendStrategy():
             avg_quote_price = client.get_avg_price(symbol=f'{self.quote}USDT')
             avg_quote_price = float(avg_quote_price['price'])
         # Now, compute profits in USD terms:
-        self.base_usd = self.base_profit/avg_base_price
-        self.quote_usd = self.quote_profit/avg_quote_price
-        self.gross_usd = self.base_profit = self.base_usd + self.quote_usd
+        self.base_usd = self.base_profit*avg_base_price
+        self.quote_usd = self.quote_profit*avg_quote_price
+        self.gross_usd = self.base_usd + self.quote_usd
         # Compute TRUE trade fee:
         fee, feeAsset = self.get_trade_fee()
         # Now compute net USD profit:
         feeAssetUsdPrice = float( client.get_avg_price(symbol=f'{feeAsset}USDT')['price'] )
-        self.net_usd = self.gross_usd - fee/feeAssetUsdPrice
+        self.net_usd = self.gross_usd - fee*feeAssetUsdPrice
         self.trade_fee = fee
         
         self.total_base_profit += self.base_profit
@@ -188,7 +202,10 @@ class SuperTrendStrategy():
         self.total_usd_profit += self.net_usd
         self.elapsed = (self.end - self.start)/60 # duration in minutes
         
-        
+        msg = f"{self.symbol}:\n Trade profits:{self.base_profit:.8f}{self.base}; {self.quote_profit:.8f}{self.quote}; ${self.net_usd:.2f}\n"
+        msg += f"Total profits: ${self.total_usd_profit} : {self.total_base_profit:.8f}{self.base}; {self.total_quote_profit:.8f}{self.quote}" 
+        #self.bot.send_message(chat_id=user_id, text=msg)
+        self.send_to_telegram(msg)
         
         header = f"time,symbol,EntryPrice,ExitPrice,qty,profit_pc,{self.base}_profit,{self.quote}_profit,gross_usd_profit,net_usd_profit,fee,duration"
         with open(fname, 'a') as f:
@@ -216,11 +233,15 @@ class SuperTrendStrategy():
         #self.new_order_status = binance_endpoints.check_order_status(self.new_order)['status']
         # If entry order was filled already before:
         if self.profit_order:
-            self.prof_order_status = binance_endpoints.check_order_status(self.profit_order)['status']
+            self.profit_order = binance_endpoints.check_order_status(self.profit_order)
+            self.prof_order_status = self.profit_order['status']
             if self.prof_order_status == 'FILLED':
                 #self.log("Profit!")
                 logger.info("Profit!")
                 self.end = time.time()
+                
+                #!!! TODO: Call function to analyze trade
+                self.analyze_trade()
                 if self.trade_type == 'long':
                     logger.debug(f"last ambuy: {self.ambuy}")
                     self.ambuy += self.base_profit * self.compound
@@ -229,8 +250,7 @@ class SuperTrendStrategy():
                     logger.debug(f"last amsell: {self.amsell}")
                     self.amsell += self.quote_profit * self.compound
                     logger.debug(f"new amsell: {self.amsell}")
-                #!!! TODO: Call function to analyze trade
-                self.analyze_trade()
+
                 self.position = False
                 self.profit_order = False
             else:
@@ -647,5 +667,6 @@ if __name__=='__main__':
     elapsed += end - start
     ws = websocket.WebSocketApp(SOCKET, on_open=on_open, on_close=on_close, on_message=on_message)
     
-    ws.run_forever()
+    while True:
+        ws.run_forever()
         
