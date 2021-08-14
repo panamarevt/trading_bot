@@ -200,10 +200,13 @@ class SuperTrendStrategy():
         self.total_quote_profit += self.quote_profit
         
         self.total_usd_profit += self.net_usd
+        # Net USD profit according to current asset prices:
+        self.total_usd_curr = self.total_base_profit*avg_base_price + self.total_quote_profit*avg_quote_price
+        
         self.elapsed = (self.end - self.start)/60 # duration in minutes
         
         msg = f"{self.symbol}:\n Trade profits:{self.base_profit:.8f}{self.base}; {self.quote_profit:.8f}{self.quote}; ${self.net_usd:.2f}\n"
-        msg += f"Total profits: ${self.total_usd_profit} : {self.total_base_profit:.8f}{self.base}; {self.total_quote_profit:.8f}{self.quote}" 
+        msg += f"Total profits: ${self.total_usd_profit:.2f} (${self.total_usd_curr:.2f}) : {self.total_base_profit:.8f}{self.base}; {self.total_quote_profit:.8f}{self.quote}" 
         #self.bot.send_message(chat_id=user_id, text=msg)
         self.send_to_telegram(msg)
         
