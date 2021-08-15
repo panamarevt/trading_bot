@@ -414,9 +414,12 @@ class SuperTrendStrategy():
                 logger.debug(f"Long signal: {signal_long}")
                 if signal_long:
                         #self.log(f"Price signal!  Buy at {price}")
-                        logger.info(f"Price signal!  Buy {self.symbol} at {price}")
+                        msg = f"Price signal!  BUY {self.symbol} at {price}"
+                        logger.info(msg)
                         self.start = time.time()
-                        if trade_type == 'ALERT': return
+                        if trade_type == 'ALERT':
+                            self.send_to_telegram(msg)
+                            return
                         if self.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1+self.take_profit)*price
                         else: # if profit depends on ATR:
@@ -438,9 +441,12 @@ class SuperTrendStrategy():
                 if signal_short:
                         #self.log(f"Price signal!  Sell at {price}")
                         #logger.info(f"Price signal!  Sell at {price}")
-                        logger.info(f"Price signal!  Sell {self.symbol} at {price}")
-                        self.start = time.time()
-                        if trade_type == 'ALERT': return
+                        msg = f"Price signal!  SELL {self.symbol} at {price}"
+                        logger.info()
+                        self.start = time.time(msg)
+                        if trade_type == 'ALERT': 
+                            self.send_to_telegram(msg)
+                            return
                         if self.take_profit != 'atr' : # if take profit is a fixed number, just use it as %
                             self.profit_target = (1-self.take_profit)*price                        
                         else:
@@ -462,7 +468,7 @@ class SuperTrendStrategy():
 
 
 def on_message(ws, message):
-    global closes, opens, highs, lows, count, elapsed, start
+    global closes, opens, highs, lows, count, elapsed, start, trade_mode
     
     #t_start = time.time()
     #print('received message')
@@ -488,7 +494,7 @@ def on_message(ws, message):
         opens.append(float(op))
         highs.append(float(hi))
         lows.append(float(lo))
-        Strategy.next(pd.Series(opens), pd.Series(highs), pd.Series(lows), pd.Series(closes), op_time)
+        Strategy.next(pd.Series(opens), pd.Series(highs), pd.Series(lows), pd.Series(closes), op_time, trade_type=trade_mode)
         if Strategy.position:
             logger.debug("Check position status")
             Strategy.check_position()
@@ -608,6 +614,16 @@ def parse_args():
         default=None,
         help='Filename to save logging data. If None the default filename is used: {symbol}_{interval}.log')         
 
+    parser.add_argument(
+        '--market', 
+        default='spot',
+        help='Choose market: spot or futures. For now in futures only ALERT mode is supported.')  
+    
+    parser.add_argument(
+        '--mode', 
+        default='LIVE',
+        help='Select between LIVE, ALERT or PAPER (coming soon...)')  
+    
     return parser.parse_args()
 
 #---------------------------------------------------------------
@@ -626,13 +642,17 @@ if __name__=='__main__':
     amsell = args.cashsell
     profit = args.profit
     loss = args.loss
+    market = args.market
+    trade_mode = args.mode
     
     #symbol='linkusdt'
     if interval == 60:
         interval='1h'
+    elif interval == 240:
+        interval='4h'
     else:
         interval = f'{interval}m'
-    args.log = args.log or f'{symbol}_{interval}_{side}_{period}_{mult}.log' 
+    args.log = args.log or f'{symbol}_{interval}_{side}_{period}_{mult}_{market}.log' 
     logfile = args.log
     
     starting_summary(args)
@@ -652,7 +672,10 @@ if __name__=='__main__':
     closes = list(closes.close.iloc[-20:])
     
     count = 0
-    SOCKET = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
+    if market == 'spot':
+        SOCKET = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
+    else:
+        SOCKET = f"wss://fstream.binance.com/ws/{symbol.lower()}@kline_{interval}"
     logfile = f"{symbol}_{interval}_10_3_{side}.log"
     
 #    sigma_fac = args.sigma

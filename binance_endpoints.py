@@ -87,7 +87,9 @@ def GetKlines(symbol, interval='15m', limit=300):
                  '5m':Client.KLINE_INTERVAL_5MINUTE,
                  '15m':Client.KLINE_INTERVAL_15MINUTE,
                  '30m':Client.KLINE_INTERVAL_30MINUTE,
-                 '1h':Client.KLINE_INTERVAL_1HOUR}
+                 '1h':Client.KLINE_INTERVAL_1HOUR,
+                 '4h':Client.KLINE_INTERVAL_4HOUR
+                }
     candles = client.get_klines(symbol=symbol, interval=intervals[interval], limit=limit)
     #Convert the candles to DataFrame object:
     candles_df = df(candles, columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore' ])                
